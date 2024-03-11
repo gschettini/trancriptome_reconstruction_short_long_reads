@@ -1,0 +1,20 @@
+    [
+      {
+        orientation: "fr",
+        type: "paired-end",
+        right reads: [
+          "/test/set_b/SR_fastq/preprocessed/SRR23565574_R1.normalized.filtered.trimmed.fastq",
+          "/test/set_b/SR_fastq/preprocessed/SRR23565576_R1.normalized.filtered.trimmed.fastq"
+        ],
+        left reads: [
+          "/test/set_b/SR_fastq/preprocessed/SRR23565574_R2.normalized.filtered.trimmed.fastq",
+          "/test/set_b/SR_fastq/preprocessed/SRR23565576_R2.normalized.filtered.trimmed.fastq"
+        ]
+      },
+      {
+        type: "nanopore",
+        single reads: [
+          "/test/set_b/LR_nanopore/canu/trimming/set_b.trimmedReads.fasta.gz"
+        ]
+      }
+    ]

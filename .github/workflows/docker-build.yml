@@ -1,0 +1,20 @@
+name: Build Docker Image
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+
+      - name: List Contents
+        run: ls -a
+
+      - name: Build Docker Image
+        run: docker build -t integrating_sr_lr_workflow:latest .

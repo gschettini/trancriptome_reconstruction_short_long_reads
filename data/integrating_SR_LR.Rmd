@@ -1,0 +1,2042 @@
+---
+title: "integrating_sr_lr_workflow"
+author: "Gustavo Schettini & Fernando Biase"
+date: "2024-03-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##Load required R-packages
+```{r, eval=FALSE}
+require('stringr')
+require('rtracklayer')
+require('GenomicRanges')
+require('htmlwidgets')
+require('rvest')
+```
+
+
+##Build Hisat2 splice_sites file##
+```{bash, eval=FALSE}
+gtf_ensembl=/reference/annotation/Bos_taurus.ARS-UCD1.3.111.gtf
+splice_sites=/reference/fasta/hisat/splice_sites/splice_sites.txt
+
+python3.7 /hisat2-2.2.1/hisat2_extract_splice_sites.py $gtf_ensembl > $splice_sites
+```
+
+##Build Hisat2 index##
+```{bash, eval=FALSE}
+n_cores=30
+splice_sites=/reference/fasta/hisat/splice_sites/splice_sites.txt
+reference_genome_ensembl=/reference/fasta/Bos_taurus.ARS-UCD1.3.dna.toplevel.fa
+path_to_index=/reference/fasta/hisat/index/Bos_taurus.ARS-UCD1.3.111
+
+/hisat2-2.2.1/hisat2-build -p $(echo $n_cores) --ss $splice_sites $reference_genome_ensembl $path_to_index
+```
+
+##Trimming - set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+n_cores=30
+$adapters_SR_a=/Trimmomatic-0.39/adapters/NexteraPE-PE.fa
+
+cd $folder_a/SR_fastq/trimming
+
+for sample in $(ls $folder_a/SR_fastq/*.fastq* | awk -F '_R[12]' '{print $1}' | sort | uniq); do
+
+read1=$(ls $folder_a/SR_fastq/*.fastq* | grep $sample | grep "_R1")
+read2=$(ls $folder_a/SR_fastq/*.fastq* | grep $sample | grep "_R2")
+
+read1_file=$(basename "$read1" | cut -f 1 -d '.')
+read2_file=$(basename "$read2" | cut -f 1 -d '.')
+extension="${read1#*.}"
+
+echo 'Trimming from set A now'
+echo ${read1_file}
+echo ${read2_file}
+
+output_R1=$folder_a/SR_fastq/trimming/$(echo $read1_file).trimmed.$(echo $extension)
+output_R1_un=$folder_a/SR_fastq/trimming/$(echo $read1_file).untrimmed.$(echo $extension)
+output_R2=$folder_a/SR_fastq/trimming/$(echo $read2_file).trimmed.$(echo $extension)
+output_R2_un=$folder_a/SR_fastq/trimming/$(echo $read2_file).untrimmed.$(echo $extension)
+
+java -jar /Trimmomatic-0.39/trimmomatic-0.39.jar PE -threads $(echo $n_cores) $read1 $read2 $output_R1 $output_R1_un $output_R2 $output_R2_un ILLUMINACLIP:$adapters_SR_a:5:10:10 SLIDINGWINDOW:3:25 MINLEN:40 AVGQUAL:35
+done;
+
+#Remove intermediate files
+rm $folder_a/SR_fastq/trimming/*.untrimmed.fastq*
+
+```
+
+##Trimming - set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+n_cores=30
+$adapters_SR_b=/Trimmomatic-0.39/adapters/NexteraPE-PE.fa
+
+cd $folder_b/SR_fastq/trimming
+
+for sample in $(ls $folder_b/SR_fastq/*.fastq* | awk -F '_R[12]' '{print $1}' | sort | uniq); do
+
+read1=$(ls $folder_b/SR_fastq/*.fastq* | grep $sample | grep "_R1")
+read2=$(ls $folder_b/SR_fastq/*.fastq* | grep $sample | grep "_R2")
+
+read1_file=$(basename "$read1" | cut -f 1 -d '.')
+read2_file=$(basename "$read2" | cut -f 1 -d '.')
+extension="${read1#*.}"
+
+echo 'Trimming from set B now'
+echo ${read1_file}
+echo ${read2_file}
+
+output_R1=$folder_b/SR_fastq/trimming/$(echo $read1_file).trimmed.$(echo $extension)
+output_R1_un=$folder_b/SR_fastq/trimming/$(echo $read1_file).untrimmed.$(echo $extension)
+output_R2=$folder_b/SR_fastq/trimming/$(echo $read2_file).trimmed.$(echo $extension)
+output_R2_un=$folder_b/SR_fastq/trimming/$(echo $read2_file).untrimmed.$(echo $extension)
+
+java -jar /Trimmomatic-0.39/trimmomatic-0.39.jar PE -threads $(echo $n_cores) $read1 $read2 $output_R1 $output_R1_un $output_R2 $output_R2_un ILLUMINACLIP:$adapters_SR_b:5:10:10 SLIDINGWINDOW:3:25 MINLEN:40 AVGQUAL:35
+done;
+
+#Remove intermediate files
+rm $folder_b/SR_fastq/trimming/*.untrimmed.fastq*
+```
+
+
+##Alignment - set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+n_cores=30
+path_to_index=/reference/fasta/hisat/index/Bos_taurus.ARS-UCD1.3.111
+splice_sites=/reference/fasta/hisat/splice_sites/splice_sites.txt
+
+cd $folder_a/SR_fastq/alignment
+
+for sample in $(ls $folder_a/SR_fastq/trimming/*.trimmed.fastq* | awk -F '_R[12]' '{print $1}' | sort | uniq); do
+
+read1=$(ls $folder_a/SR_fastq/trimming/*.trimmed.fastq*| grep $sample | grep "_R1")
+read2=$(ls $folder_a/SR_fastq/trimming/*.trimmed.fastq* | grep $sample | grep "_R2")
+
+read1_file=$(basename "$read1" | cut -f 1 -d '.' | sed "s/_R1//g" )
+
+echo $read1
+echo $read2
+echo 'Aligning from set A now'
+
+/hisat2-2.2.1/hisat2  -p $(echo $n_cores) -k 1 -x $path_to_index -1 $read1 -2 $read2 --bowtie2-dp 2 --score-min L,0,-1 --dta --known-splicesite-infile $splice_sites  -S $(echo $read1_file)_alignment.sam --no-unal --summary-file $(echo $read1_file)_alignment_summary.txt
+done;
+
+```
+
+
+##Alignment - set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+n_cores=30
+path_to_index=/reference/fasta/hisat/index/Bos_taurus.ARS-UCD1.3.111
+splice_sites=/reference/fasta/hisat/splice_sites/splice_sites.txt
+
+cd $folder_b/SR_fastq/alignment
+
+for sample in $(ls $folder_b/SR_fastq/trimming/*.trimmed.fastq* | awk -F '_R[12]' '{print $1}' | sort | uniq); do
+
+read1=$(ls $folder_b/SR_fastq/trimming/*.trimmed.fastq*| grep $sample | grep "_R1")
+read2=$(ls $folder_b/SR_fastq/trimming/*.trimmed.fastq* | grep $sample | grep "_R2")
+
+read1_file=$(basename "$read1" | cut -f 1 -d '.' | sed "s/_R1//g" )
+
+echo $read1
+echo $read2
+echo 'Aligning from set B now'
+
+/hisat2-2.2.1/hisat2  -p $(echo $n_cores) -k 1 -x $path_to_index -1 $read1 -2 $read2 --bowtie2-dp 2 --score-min L,0,-1 --dta --known-splicesite-infile $splice_sites  -S $(echo $read1_file)_alignment.sam --no-unal --summary-file $(echo $read1_file)_alignment_summary.txt
+done;
+
+```
+
+
+##Preprocessing - set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+n_cores=30
+
+echo "Preprocessing SR from set A now"
+
+cd $folder_a/SR_fastq/alignment
+
+for sample in $(ls $folder_a/SR_fastq/alignment/*.sam | awk -F '_alignment' '{print $1}' | sort); do
+
+sample_file=$(basename "$sample" | cut -f 1 -d '.')
+
+echo ${sample_file}
+
+samtools sort -@ $(echo $n_cores) -O BAM -l 9 -o $(echo ${sample_file})_alignment.bam $(echo ${sample_file})_alignment.sam
+samtools index $(echo ${sample_file})_alignment.bam
+samtools view --threads $(echo $n_cores) -b -h -F 1796 -o $(echo ${sample_file})_alignment.filtered.bam $(echo ${sample_file})_alignment.bam
+samtools sort -@ $(echo $n_cores) -O BAM -l 9 -o $(echo ${sample_file})_alignment.filtered.sorted.bam $(echo ${sample_file})_alignment.filtered.bam
+/biobambam2/bin/bammarkduplicates I=$(echo ${sample_file})_alignment.filtered.sorted.bam O=$(echo ${sample_file})_alignment.filtered.sorted.undup.bam markthreads=$(echo $n_cores) level=9 rmdup=1 index=1 dupindex=0 verbose=0
+/biobambam2/bin/bamtofastq filename=$(echo ${sample_file})_alignment.filtered.sorted.undup.bam F=$folder_a/SR_fastq/preprocessed/$(echo ${sample_file})_R1.fastq F2=$folder_a/SR_fastq/preprocessed/$(echo ${sample_file})_R2.fastq
+
+done;
+
+cd $folder_a/SR_fastq/preprocessed
+
+for sample in $(ls $folder_a/SR_fastq/preprocessed/*_R*.fastq | awk -F '_R[12]' '{print $1}' | sort | uniq); do
+
+
+read1=$(ls $folder_a/SR_fastq/preprocessed/*_R*.fastq | grep $sample | grep "_R1.fastq")
+read2=$(ls $folder_a/SR_fastq/preprocessed/*_R*.fastq | grep $sample | grep "_R2.fastq")
+
+read1_file=$(basename "$read1" | cut -f 1 -d '.')
+read2_file=$(basename "$read2" | cut -f 1 -d '.')
+sample_name=$(echo $read1_file | awk -F '_R1' '{print $1}' )
+
+echo $sample_name
+
+#Error correction / Removing contamination
+/bbmap/bbduk.sh in1=$(echo ${read1_file}).fastq in2=$(echo ${read2_file}).fastq out1=$(echo ${read1_file}).trimmed.unmatched.fastq out2=$(echo ${read2_file}).trimmed.unmatched.fastq ref=/bbmap/resources/phix174_ill.ref.fa.gz,/bbmap/resources/sequencing_artifacts.fa.gz t=$(echo $n_cores) k=21 hdist=1 stats=stats_$sample_name.txt
+
+#quality filtering
+/bbmap/bbduk.sh in1=$(echo ${read1_file}).trimmed.unmatched.fastq in2=$(echo ${read2_file}).trimmed.unmatched.fastq out1=$(echo ${read1_file}).filtered.trimmed.fastq out2=$(echo ${read2_file}).filtered.trimmed.fastq qtrim=rl trimq=30 minlength=100 t=$(echo $n_cores) minbasequality=25
+
+#normalization and error correction
+/bbmap/bbnorm.sh in1=$(echo ${read1_file}).filtered.trimmed.fastq in2=$(echo ${read2_file}).filtered.trimmed.fastq out1=$(echo ${read1_file}).normalized.filtered.trimmed.fastq out2=$(echo ${read2_file}).normalized.filtered.trimmed.fastq target=30 maxdepth=30 mindepth=10 prefilter=t bits=16 prefilter ecc=t t=$(echo $n_cores)
+
+done;
+
+
+#Remove intermediate files
+rm *_R1.fastq *_R2.fastq *.trimmed.unmatched.fastq.gz *_R1.filtered.trimmed.fastq *_R2.filtered.trimmed.fastq
+
+cd $folder_a/SR_fastq/alignment
+rm *.sam *_alignment.bam* *_alignment.filtered.bam* *_alignment.filtered.sorted.bam*
+```
+
+
+##Preprocessing - set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+n_cores=30
+
+
+echo "Preprocessing SR from set B now"
+
+cd $folder_b/SR_fastq/alignment
+
+for sample in $(ls $folder_b/SR_fastq/alignment/*.sam | awk -F '_alignment' '{print $1}' | sort); do
+
+sample_file=$(basename "$sample" | cut -f 1 -d '.')
+
+echo ${sample_file}
+
+samtools sort -@ $(echo $n_cores) -O BAM -l 9 -o $(echo ${sample_file})_alignment.bam $(echo ${sample_file})_alignment.sam
+samtools index $(echo ${sample_file})_alignment.bam
+samtools view --threads $(echo $n_cores) -b -h -F 1796 -o $(echo ${sample_file})_alignment.filtered.bam $(echo ${sample_file})_alignment.bam
+samtools sort -@ $(echo $n_cores) -O BAM -l 9 -o $(echo ${sample_file})_alignment.filtered.sorted.bam $(echo ${sample_file})_alignment.filtered.bam
+/biobambam2/bin/bammarkduplicates I=$(echo ${sample_file})_alignment.filtered.sorted.bam O=$(echo ${sample_file})_alignment.filtered.sorted.undup.bam markthreads=$(echo $n_cores) level=9 rmdup=1 index=1 dupindex=0 verbose=0
+/biobambam2/bin/bamtofastq filename=$(echo ${sample_file})_alignment.filtered.sorted.undup.bam F=$folder_b/SR_fastq/preprocessed/$(echo ${sample_file})_R1.fastq F2=$folder_b/SR_fastq/preprocessed/$(echo ${sample_file})_R2.fastq
+
+done;
+
+cd $folder_b/SR_fastq/preprocessed
+
+for sample in $(ls $folder_b/SR_fastq/preprocessed/*R*.fastq | awk -F '_R[12]' '{print $1}' | sort | uniq); do
+
+
+read1=$(ls $folder_b/SR_fastq/preprocessed/*R*.fastq | grep $sample | grep "_R1.fastq")
+read2=$(ls $folder_b/SR_fastq/preprocessed/*R*.fastq | grep $sample | grep "_R2.fastq")
+
+read1_file=$(basename "$read1" | cut -f 1 -d '.')
+read2_file=$(basename "$read2" | cut -f 1 -d '.')
+sample_name=$(echo $read1_file | awk -F '_R1' '{print $1}' )
+
+echo $sample_name
+
+#Error correction / Removing contamination
+/bbmap/bbduk.sh in1=$(echo ${read1_file}).fastq in2=$(echo ${read2_file}).fastq out1=$(echo ${read1_file}).trimmed.unmatched.fastq.gz out2=$(echo ${read2_file}).trimmed.unmatched.fastq.gz ref=/bbmap/resources/phix174_ill.ref.fa.gz,/bbmap/resources/sequencing_artifacts.fa.gz t=$(echo $n_cores) k=21 hdist=1 stats=stats_$sample_name.txt
+
+#quality filtering
+/bbmap/bbduk.sh in1=$(echo ${read1_file}).trimmed.unmatched.fastq.gz in2=$(echo ${read2_file}).trimmed.unmatched.fastq.gz out1=$(echo ${read1_file}).filtered.trimmed.fastq.gz out2=$(echo ${read2_file}).filtered.trimmed.fastq.gz qtrim=rl trimq=30 minlength=100 t=$(echo $n_cores) minbasequality=25
+
+#normalization and error correction
+/bbmap/bbnorm.sh in1=$(echo ${read1_file}).filtered.trimmed.fastq.gz in2=$(echo ${read2_file}).filtered.trimmed.fastq.gz out1=$(echo ${read1_file}).normalized.filtered.trimmed.fastq out2=$(echo ${read2_file}).normalized.filtered.trimmed.fastq target=30 maxdepth=30 mindepth=10 prefilter=t bits=16 prefilter ecc=t t=$(echo $n_cores)
+
+done;
+
+#Remove intermediate files
+rm *_R1.fastq *_R2.fastq *.trimmed.unmatched.fastq.gz *_R1.filtered.trimmed.fastq *_R2.filtered.trimmed.fastq
+
+cd $folder_b/SR_fastq/alignment
+rm *.sam *_alignment.bam* *_alignment.filtered.bam* *_alignment.filtered.sorted.bam*
+
+```
+
+
+##Preprocessing2 - set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+n_cores=30
+
+##ONT long-read correction##
+echo "Correcting LR - set A"
+/canu/build/bin/canu -correct -p set_a -d $folder_a/LR_nanopore/canu/correction genomeSize=$(echo $genome_size) hapMemory=$(echo $memory_ram) hapThreads=$(echo $n_cores) cormhapMemory=$(echo $memory_ram) corThreads=$(echo $n_cores) batMemory=$(echo $memory_ram) batThreads=$(echo $n_cores) stopOnLowCoverage=0 minReadLength=200 minOverlapLength=200 corMhapSensitivity=high corOutCoverage=all corOverlapper=minimap minInputCoverage=0 -nanopore-raw $folder_a/LR_nanopore/*.fastq
+
+##ONT long-read trimming##
+echo "Trimming LR - set A"
+/canu/build/bin/canu -trim -p set_a -d $folder_a/LR_nanopore/canu/trimming genomeSize=$(echo $genome_size) mmapMemory=$(echo $memory_ram) mmapThreads=$(echo $n_cores) obtmmapMemory=$(echo $memory_ram) batMemory=$(echo $memory_ram) batThreads=$(echo $n_cores) stopOnLowCoverage=0  minReadLength=200 minOverlapLength=200 utgOverlapper=minimap corOutCoverage=all utgMhapSensitivity=high minInputCoverage=0 -nanopore-corrected $folder_a/LR_nanopore/canu/correction/set_a.correctedReads.fasta.gz
+
+```
+
+
+##Preprocessing2 - set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+n_cores=30
+
+##ONT long-read correction##
+echo "Correcting LR - set B"
+/canu/build/bin/canu -correct -p set_b -d $folder_b/LR_nanopore/canu/correction genomeSize=$(echo $genome_size) hapMemory=$(echo $memory_ram) hapThreads=$(echo $n_cores) cormhapMemory=$(echo $memory_ram) corThreads=$(echo $n_cores) batMemory=$(echo $memory_ram) batThreads=$(echo $n_cores) stopOnLowCoverage=0 minReadLength=200 minOverlapLength=200 corMhapSensitivity=high corOutCoverage=all corOverlapper=minimap minInputCoverage=0 -nanopore-raw $folder_b/LR_nanopore/*.fastq
+
+##ONT long-read trimming##
+echo "Trimming LR - set B"
+/canu/build/bin/canu -trim -p set_b -d $folder_b/LR_nanopore/canu/trimming genomeSize=$(echo $genome_size) mmapMemory=$(echo $memory_ram) mmapThreads=$(echo $n_cores) obtmmapMemory=$(echo $memory_ram) batMemory=$(echo $memory_ram) batThreads=$(echo $n_cores) stopOnLowCoverage=0  minReadLength=200 minOverlapLength=200 utgOverlapper=minimap corOutCoverage=all utgMhapSensitivity=high minInputCoverage=0 -nanopore-corrected $folder_b/LR_nanopore/canu/correction/set_b.correctedReads.fasta.gz
+
+```
+
+
+##de novo assembly - set A ##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+n_cores=30
+
+echo "de novo assembly - set A"
+/SPAdes-3.14.1-Linux/bin/spades.py --rna --dataset $folder_a/files_a.yaml -o $folder_a/de_novo_assembly/ -t $(echo $n_cores) -k 21, 33, 55, 77
+seqkit stats $folder_a/de_novo_assembly/hard_filtered_transcripts.fasta > $folder_a/de_novo_assembly/hard_filtered_transcripts_summary.txt
+
+```
+
+##de novo assembly - set B ##
+```{bash, eval=FALSE}
+
+folder_b=/test/set_b
+n_cores=30
+
+echo "de novo assembly - set B"
+/SPAdes-3.14.1-Linux/bin/spades.py --rna --dataset $folder_b/files_b.yaml -o $folder_b/de_novo_assembly/ -t $(echo $n_cores) -k 21, 33, 55, 77
+seqkit stats $folder_b/de_novo_assembly/hard_filtered_transcripts.fasta > $folder_b/de_novo_assembly/hard_filtered_transcripts_summary.txt
+
+```
+
+
+##Comparisons - required files##
+```{bash, eval=FALSE}
+reference_GMAP_ensembl=/reference/GMAP/ensembl
+reference_genome_ensembl=/reference/fasta/Bos_taurus.ARS-UCD1.3.dna.toplevel.fa
+
+reference_GMAP_ncbi=/reference/GMAP/ncbi
+reference_genome_ncbi=/reference/fasta/NCBI_GCF_002263795.2_ARS-UCD1.3_genomic.fna
+
+#Build index ensembl
+gmap_build -D $reference_GMAP_ensembl $reference_genome_ensembl --genomedb=ensembl_index
+
+#Build index ncbi
+gmap_build -D $reference_GMAP_ncbi $reference_genome_ncbi --genomedb=ncbi_index
+
+```
+
+
+##GMAP alignment - ENSEMBL - set A ##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+n_cores=30
+reference_GMAP_ensembl=/reference/GMAP/ensembl
+
+cd $folder_a/annotation_GMAP/ensembl
+gmap -D $reference_GMAP_ensembl/ensembl_index -d ensembl_index -t $(echo $n_cores) $folder_a/de_novo_assembly/hard_filtered_transcripts.fasta -f gff3_gene --microexon-spliceprob=1 --nofails --quality-protocol=illumina --suboptimal-score=0.99 --min-identity=0.90 --npaths=1 > set_a_ensembl.gff3
+gmap -D $reference_GMAP_ensembl/ensembl_index -d ensembl_index -t $(echo $n_cores) $folder_a/de_novo_assembly/hard_filtered_transcripts.fasta -f samse --microexon-spliceprob=1 --nofails --quality-protocol=illumina --suboptimal-score=0.99 --min-identity=0.90 --npaths=1 > set_a_ensembl.sam
+
+#   Filtering sequences with more than 10 mismatches (SET A)
+awk ' $0 ~ /mismatches=[0-9];/ ' set_a_ensembl.gff3 > set_a_ensembl_filtered.gff3
+
+```
+
+##GMAP alignment - ENSEMBL - set B ##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+n_cores=30
+reference_GMAP_ensembl=/reference/GMAP/ensembl
+
+cd $folder_b/annotation_GMAP/ensembl 
+gmap -D $reference_GMAP_ensembl/ensembl_index -d ensembl_index -t $(echo $n_cores) $folder_b/de_novo_assembly/hard_filtered_transcripts.fasta -f gff3_gene --microexon-spliceprob=1 --nofails --quality-protocol=illumina --suboptimal-score=0.99 --min-identity=0.90 --npaths=1 > set_b_ensembl.gff3
+gmap -D $reference_GMAP_ensembl/ensembl_index -d ensembl_index -t $(echo $n_cores) $folder_b/de_novo_assembly/hard_filtered_transcripts.fasta -f samse --microexon-spliceprob=1 --nofails --quality-protocol=illumina --suboptimal-score=0.99 --min-identity=0.90 --npaths=1 > set_b_ensembl.sam
+
+#   Filtering sequences with more than 10 mismatches (SET B)
+awk ' $0 ~ /mismatches=[0-9];/ ' set_b_ensembl.gff3 > set_b_ensembl_filtered.gff3
+
+```
+
+
+## Filter #1 Removing transcripts aligned with >10 mismatches or aligned to known genes (ENSEMBL)##
+```{r, eval=FALSE}
+folder_a <- "/test/set_a"
+folder_b <- "/test/set_b"
+
+#set A
+GFF_GMAP_a<-read.table(paste0(folder_a,"/annotation_GMAP/ensembl/set_a_ensembl.gff3"), sep = "\t")
+GFF_GMAP_a$gene<-word(GFF_GMAP_a$V9, start = 1, end = 1, sep = ";")
+GFF_GMAP_a$gene<-gsub("ID=", "", GFF_GMAP_a$gene)
+GFF_GMAP_a$gene<-gsub(".path.*", "", GFF_GMAP_a$gene)
+GFF_GMAP_a$gene<-gsub(".mrna.*", "", GFF_GMAP_a$gene)
+
+#set B
+GFF_GMAP_b<-read.table(paste0(folder_b,"/annotation_GMAP/ensembl/set_b_ensembl.gff3"), sep = "\t")
+GFF_GMAP_b$gene<-word(GFF_GMAP_b$V9, start = 1, end = 1, sep = ";")
+GFF_GMAP_b$gene<-gsub("ID=", "", GFF_GMAP_b$gene)
+GFF_GMAP_b$gene<-gsub(".path.*", "", GFF_GMAP_b$gene)
+GFF_GMAP_b$gene<-gsub(".mrna.*", "", GFF_GMAP_b$gene)
+
+#set A
+GFF_filtered_a<-read.table(paste0(folder_a, "/annotation_GMAP/ensembl/set_a_ensembl_filtered.gff3"), sep = "\t")
+GFF_filtered_a$gene<-word(GFF_filtered_a$V9, start = 1, end = 1, sep = ";")
+GFF_filtered_a$gene<-gsub("ID=", "", GFF_filtered_a$gene)
+GFF_filtered_a$gene<-gsub(".path.*", "", GFF_filtered_a$gene)
+GFF_filtered_a$gene<-gsub(".mrna.*", "", GFF_filtered_a$gene)
+
+#set B
+GFF_filtered_b<-read.table(paste0(folder_b, "/annotation_GMAP/ensembl/set_b_ensembl_filtered.gff3"), sep = "\t")
+GFF_filtered_b$gene<-word(GFF_filtered_b$V9, start = 1, end = 1, sep = ";")
+GFF_filtered_b$gene<-gsub("ID=", "", GFF_filtered_b$gene)
+GFF_filtered_b$gene<-gsub(".path.*", "", GFF_filtered_b$gene)
+GFF_filtered_b$gene<-gsub(".mrna.*", "", GFF_filtered_b$gene)
+
+GFF_GMAP_a2<-subset(GFF_GMAP_a, GFF_GMAP_a$gene %in% GFF_filtered_a$gene)
+GFF_GMAP_a2<- GFF_GMAP_a2[,c(1:9)]
+
+GFF_GMAP_b2<-subset(GFF_GMAP_b, GFF_GMAP_b$gene %in% GFF_filtered_b$gene)
+GFF_GMAP_b2<- GFF_GMAP_b2[,c(1:9)]
+
+#summary clean GFF file ENSEMBL
+
+print("Set A summary")
+nrow(subset(GFF_GMAP_a2, GFF_GMAP_a2$V3 == "gene"))
+print("Set B summary")
+nrow(subset(GFF_GMAP_b2, GFF_GMAP_b2$V3 == "gene"))
+
+write.table(GFF_GMAP_a2, paste0(folder_a, "/annotation_GMAP/ensembl/set_a_ensembl_filtered_2.gff3"), quote = FALSE, col.names = FALSE, sep = "\t", row.names = FALSE)
+write.table(GFF_GMAP_b2, paste0(folder_b, "/annotation_GMAP/ensembl/set_b_ensembl_filtered_2.gff3"), quote = FALSE, col.names = FALSE, sep = "\t", row.names = FALSE)
+
+save.image(file=paste0(folder_a,"/R_outputs/Rscript_1.RData"))
+save.image(file=paste0(folder_b,"/R_outputs/Rscript_1.RData"))
+
+print("1st filtering finished")
+
+```
+```{bash, eval=FALSE}
+# Remove intermediate files
+
+folder_a=/test/set_a
+folder_b=/test/set_b
+
+rm $folder_a/annotation_GMAP/ensembl/set_a_ensembl.gff3 $folder_a/annotation_GMAP/ensembl/set_a_ensembl_filtered.gff3  $folder_b/annotation_GMAP/ensembl/set_b_ensembl.gff3 $folder_b/annotation_GMAP/ensembl/set_b_ensembl_filtered.gff3
+
+```
+
+
+##Compare our new gff file with ENSEMBL gff file - Set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+gtf_ensembl=/reference/annotation/Bos_taurus.ARS-UCD1.3.111.gtf
+
+cd $folder_a/comparisons/ensembl
+
+/gffcompare/gffcompare -r $gtf_ensembl -T $folder_a/annotation_GMAP/ensembl/set_a_ensembl_filtered_2.gff3 -o "set_a_ensembl"
+
+awk '/class_code "u";/{print}' set_a_ensembl.annotated.gtf > unknown_set_a_ensembl.annotated.gtf
+
+#   total unknown
+echo "Total unknown transcripts - ENSEMBL - SET A"
+wc -l unknown_set_a_ensembl.annotated.gtf
+
+
+```
+
+
+##Compare our new gff file with ENSEMBL gff file - Set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+gtf_ensembl=/reference/annotation/Bos_taurus.ARS-UCD1.3.111.gtf
+
+cd $folder_b/comparisons/ensembl
+/gffcompare/gffcompare -r $gtf_ensembl -T $folder_b/annotation_GMAP/ensembl/set_b_ensembl_filtered_2.gff3 -o "set_b_ensembl"
+
+awk '/class_code "u";/{print}' set_b_ensembl.annotated.gtf > unknown_set_b_ensembl.annotated.gtf
+
+#   total unknown
+echo "Total unknown transcripts - ENSEMBL - SET B"
+wc -l unknown_set_b_ensembl.annotated.gtf
+
+```
+
+
+##Filter unknown transcripts from assembly file - Set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+
+cd $folder_a/comparisons/ensembl
+awk '{print $10}' unknown_set_a_ensembl.annotated.gtf > flag_u_set_a_ensembl.txt
+sed -e 's/\"//g' flag_u_set_a_ensembl.txt > flag_u_set_a_ensembl_2.txt
+sed -e 's/\;//g' flag_u_set_a_ensembl_2.txt > flag_u_set_a_ensembl_3.txt
+sed -e 's/\.mrna*//g' flag_u_set_a_ensembl_3.txt > flag_u_set_a_ensembl_4.txt
+sed -e 's/\NODE/>NODE/' flag_u_set_a_ensembl_4.txt | uniq > flag_u_set_a_ensembl_5.txt
+sed -e 's/..$//g' flag_u_set_a_ensembl_5.txt > flag_u_set_a_ensembl_6.txt
+mv flag_u_set_a_ensembl_6.txt flag_u_set_a_ensembl2.txt
+rm flag_u_set_a_ensembl_*.txt
+
+cd $folder_a/de_novo_assembly
+file="$folder_a/comparisons/ensembl/flag_u_set_a_ensembl2.txt"
+
+parallel --jobs $(echo $n_cores) --eta '
+  count={#}
+  line={1}
+
+  temp_file1="1_$count.fasta"
+  temp_file2="2_$count.fasta"
+
+  sed -n -e "/$line/,/>NODE/ p" hard_filtered_transcripts.fasta > "$temp_file1"
+  if [ -s "$temp_file1" ]; then
+    head -n -1 "$temp_file1" > "$temp_file2"
+  fi' :::: "$file"
+
+cat 2_*.fasta > flag_u_set_a_ensembl.fasta
+
+rm 1_*.fasta
+rm 2_*.fasta
+
+```
+
+
+##Filter unknown transcripts from assembly file - Set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+
+cd $folder_b/comparisons/ensembl
+awk '{print $10}' unknown_set_b_ensembl.annotated.gtf > flag_u_set_b_ensembl.txt
+sed -e 's/\"//g' flag_u_set_b_ensembl.txt > flag_u_set_b_ensembl_2.txt
+sed -e 's/\;//g' flag_u_set_b_ensembl_2.txt > flag_u_set_b_ensembl_3.txt
+sed -e 's/\.mrna*//g' flag_u_set_b_ensembl_3.txt > flag_u_set_b_ensembl_4.txt
+sed -e 's/\NODE/>NODE/' flag_u_set_b_ensembl_4.txt | uniq > flag_u_set_b_ensembl_5.txt
+sed -e 's/..$//g' flag_u_set_b_ensembl_5.txt > flag_u_set_b_ensembl_6.txt
+mv flag_u_set_b_ensembl_6.txt flag_u_set_b_ensembl2.txt
+rm flag_u_set_b_ensembl_*.txt
+
+cd $folder_b/de_novo_assembly
+file="$folder_b/comparisons/ensembl/flag_u_set_b_ensembl2.txt"
+
+parallel --jobs $(echo $n_cores) --eta '
+  count={#}
+  line={1}
+
+  temp_file1="1_$count.fasta"
+  temp_file2="2_$count.fasta"
+
+  sed -n -e "/$line/,/>NODE/ p" hard_filtered_transcripts.fasta > "$temp_file1"
+  if [ -s "$temp_file1" ]; then
+    head -n -1 "$temp_file1" > "$temp_file2"
+  fi' :::: "$file"
+
+cat 2_*.fasta > flag_u_set_b_ensembl.fasta
+
+rm 1_*.fasta
+rm 2_*.fasta
+
+```
+
+
+##GMAP alignment - NCBI - Set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+reference_GMAP_ncbi=/reference/GMAP/ncbi
+n_cores=30
+
+cd $folder_a/annotation_GMAP/ncbi
+gmap -D $reference_GMAP_ncbi/ncbi_index -d ncbi_index -t $(echo $n_cores) $folder_a/de_novo_assembly/flag_u_set_a_ensembl.fasta -f gff3_gene --microexon-spliceprob=1 --nofails --quality-protocol=illumina --suboptimal-score=0.99 --min-identity=0.90 --npaths=1 > set_a_ncbi.gff3
+gmap -D $reference_GMAP_ncbi/ncbi_index -d ncbi_index -t $(echo $n_cores) $folder_a/de_novo_assembly/flag_u_set_a_ensembl.fasta -f samse --microexon-spliceprob=1 --nofails --quality-protocol=illumina --suboptimal-score=0.99 --min-identity=0.90 --npaths=1 > set_a_ncbi.sam
+
+#   Filtering sequences with more than 10 mismatches (SET A)
+awk ' $0 ~ /mismatches=[0-9];/ ' set_a_ncbi.gff3 > set_a_ncbi_filtered.gff3
+```
+
+
+##GMAP alignment - NCBI - Set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+reference_GMAP_ncbi=/reference/GMAP/ncbi
+n_cores=30
+
+cd $folder_b/annotation_GMAP/ncbi
+gmap -D $reference_GMAP_ncbi/ncbi_index -d ncbi_index -t $(echo $n_cores) $folder_b/de_novo_assembly/flag_u_set_b_ensembl.fasta -f gff3_gene --microexon-spliceprob=1 --nofails --quality-protocol=illumina --suboptimal-score=0.99 --min-identity=0.90 --npaths=1 > set_b_ncbi.gff3
+gmap -D $reference_GMAP_ncbi/ncbi_index -d ncbi_index -t $(echo $n_cores) $folder_b/de_novo_assembly/flag_u_set_b_ensembl.fasta -f samse --microexon-spliceprob=1 --nofails --quality-protocol=illumina --suboptimal-score=0.99 --min-identity=0.90 --npaths=1 > set_b_ncbi.sam
+
+#   Filtering sequences with more than 10 mismatches (SET B)
+awk ' $0 ~ /mismatches=[0-9];/ ' set_b_ncbi.gff3 > set_b_ncbi_filtered.gff3
+```
+
+
+##Filter #2 - Removing transcripts aligned to known genes (NCBI)##
+```{r, eval=FALSE}
+folder_a <- "/test/set_a"
+folder_b <- "/test/set_b"
+
+#set A
+GFF_GMAP_a<-read.table(paste0(folder_a,"/annotation_GMAP/ncbi/set_a_ncbi.gff3"), sep = "\t")
+
+GFF_GMAP_a$gene<-word(GFF_GMAP_a$V9, start = 1, end = 1, sep = ";")
+GFF_GMAP_a$gene<-gsub("ID=", "", GFF_GMAP_a$gene)
+GFF_GMAP_a$gene<-gsub(".path.*", "", GFF_GMAP_a$gene)
+GFF_GMAP_a$gene<-gsub(".mrna.*", "", GFF_GMAP_a$gene)
+
+#set B
+GFF_GMAP_b<-read.table(paste0(folder_b,"/annotation_GMAP/ncbi/set_b_ncbi.gff3"), sep = "\t")
+
+GFF_GMAP_b$gene<-word(GFF_GMAP_b$V9, start = 1, end = 1, sep = ";")
+GFF_GMAP_b$gene<-gsub("ID=", "", GFF_GMAP_b$gene)
+GFF_GMAP_b$gene<-gsub(".path.*", "", GFF_GMAP_b$gene)
+GFF_GMAP_b$gene<-gsub(".mrna.*", "", GFF_GMAP_b$gene)
+
+#set A
+GFF_filtered_a<-read.table(paste0(folder_a,"/annotation_GMAP/ncbi/set_a_ncbi_filtered.gff3"), sep = "\t")
+GFF_filtered_a$gene<-word(GFF_filtered_a$V9, start = 1, end = 1, sep = ";")
+GFF_filtered_a$gene<-gsub("ID=", "", GFF_filtered_a$gene)
+GFF_filtered_a$gene<-gsub(".path.*", "", GFF_filtered_a$gene)
+GFF_filtered_a$gene<-gsub(".mrna.*", "", GFF_filtered_a$gene)
+
+#set B
+GFF_filtered_b<-read.table(paste0(folder_b,"/annotation_GMAP/ncbi/set_b_ncbi_filtered.gff3"), sep = "\t")
+GFF_filtered_b$gene<-word(GFF_filtered_b$V9, start = 1, end = 1, sep = ";")
+GFF_filtered_b$gene<-gsub("ID=", "", GFF_filtered_b$gene)
+GFF_filtered_b$gene<-gsub(".path.*", "", GFF_filtered_b$gene)
+GFF_filtered_b$gene<-gsub(".mrna.*", "", GFF_filtered_b$gene)
+
+
+GFF_GMAP2_a<-subset(GFF_GMAP_a, GFF_GMAP_a$gene %in% GFF_filtered_a$gene)
+GFF_GMAP2_a<- GFF_GMAP2_a[,c(1:9)]
+
+GFF_GMAP2_b<-subset(GFF_GMAP_b, GFF_GMAP_b$gene %in% GFF_filtered_b$gene)
+GFF_GMAP2_b<- GFF_GMAP2_b[,c(1:9)]
+
+# summary clean GFF file NCBI
+
+print("Set A summary")
+nrow(subset(GFF_GMAP2_a, GFF_GMAP2_a$V3 == "gene"))
+print("Set B summary")
+nrow(subset(GFF_GMAP2_b, GFF_GMAP2_b$V3 == "gene"))
+
+write.table(GFF_GMAP2_a, paste0(folder_a, "/annotation_GMAP/ncbi/set_a_ncbi_filtered_2.gff3"), quote = FALSE, col.names = FALSE, sep = "\t", row.names = FALSE)
+write.table(GFF_GMAP2_b, paste0(folder_b, "/annotation_GMAP/ncbi/set_b_ncbi_filtered_2.gff3"), quote = FALSE, col.names = FALSE, sep = "\t", row.names = FALSE)
+
+save.image(file=paste0(folder_a,"/R_outputs/Rscript_2.RData"))
+save.image(file=paste0(folder_b,"/R_outputs/Rscript_2.RData"))
+
+print("2nd filtering finished")
+
+```
+
+
+##Compare our new gff file with NCBI gff file - Set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+gff_ncbi=/reference/annotation/NCBI_GCF_002263795.2_ARS-UCD1.3_genomic.gff
+
+cd $folder_a/comparisons/ncbi
+/gffcompare/gffcompare -r $gff_ncbi -T $folder_a/annotation_GMAP/ncbi/set_a_ncbi_filtered_2.gff3 -o "set_a_ncbi"
+
+awk '/class_code "u";/{print}' set_a_ncbi.annotated.gtf > unknown_set_a_ncbi.annotated.gtf
+
+#   total unknown
+echo "Total unknown transcripts - NCBI - SET A"
+wc -l unknown_set_a_ncbi.annotated.gtf
+```
+
+
+##Compare our new gff file with NCBI gff file - Set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+gff_ncbi=/reference/annotation/NCBI_GCF_002263795.2_ARS-UCD1.3_genomic.gff
+
+cd $folder_b/comparisons/ncbi
+/gffcompare/gffcompare -r $gff_ncbi -T $folder_b/annotation_GMAP/ncbi/set_b_ncbi_filtered_2.gff3 -o "set_b_ncbi"
+
+awk '/class_code "u";/{print}' set_b_ncbi.annotated.gtf > unknown_set_b_ncbi.annotated.gtf
+
+#   total unknown
+echo "Total unknown transcripts - NCBI - SET b"
+wc -l unknown_set_b_ncbi.annotated.gtf
+```
+
+
+##Filter unknown transcripts from assembly file - Set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+
+cd $folder_a/comparisons/ncbi
+awk '{print $10}' unknown_set_a_ncbi.annotated.gtf > flag_u_set_a_ncbi.txt
+sed -e 's/\"//g' flag_u_set_a_ncbi.txt > flag_u_set_a_ncbi_2.txt
+sed -e 's/\;//g' flag_u_set_a_ncbi_2.txt > flag_u_set_a_ncbi_3.txt
+sed -e 's/\.mrna*//g' flag_u_set_a_ncbi_3.txt > flag_u_set_a_ncbi_4.txt
+sed -e 's/\NODE/>NODE/' flag_u_set_a_ncbi_4.txt | uniq > flag_u_set_a_ncbi_5.txt
+sed -e 's/..$//g' flag_u_set_a_ncbi_5.txt > flag_u_set_a_ncbi_6.txt
+mv flag_u_set_a_ncbi_6.txt flag_u_set_a_ncbi2.txt
+rm flag_u_set_a_ncbi_*.txt
+
+cd $folder_a/de_novo_assembly
+file="$folder_a/comparisons/ncbi/flag_u_set_a_ncbi2.txt"
+
+parallel --jobs $(echo $n_cores) --eta '
+  count={#}
+  line={1}
+
+  temp_file1="1_$count.fasta"
+  temp_file2="2_$count.fasta"
+
+  sed -n -e "/$line/,/>NODE/ p" flag_u_set_a_ensembl.fasta > "$temp_file1"
+  if [ -s "$temp_file1" ]; then
+    head -n -1 "$temp_file1" > "$temp_file2"
+  fi' :::: "$file"
+
+cat 2_*.fasta > flag_u_set_a_ncbi.fasta
+
+rm 1_*.fasta
+rm 2_*.fasta
+```
+
+
+##Filter unknown transcripts from assembly file - Set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+
+cd $folder_b/comparisons/ncbi
+awk '{print $10}' unknown_set_b_ncbi.annotated.gtf > flag_u_set_b_ncbi.txt
+sed -e 's/\"//g' flag_u_set_b_ncbi.txt > flag_u_set_b_ncbi_2.txt
+sed -e 's/\;//g' flag_u_set_b_ncbi_2.txt > flag_u_set_b_ncbi_3.txt
+sed -e 's/\.mrna*//g' flag_u_set_b_ncbi_3.txt > flag_u_set_b_ncbi_4.txt
+sed -e 's/\NODE/>NODE/' flag_u_set_b_ncbi_4.txt | uniq > flag_u_set_b_ncbi_5.txt
+sed -e 's/..$//g' flag_u_set_b_ncbi_5.txt > flag_u_set_b_ncbi_6.txt
+mv flag_u_set_b_ncbi_6.txt flag_u_set_b_ncbi2.txt
+rm flag_u_set_b_ncbi_*.txt
+
+cd $folder_b/de_novo_assembly
+file="$folder_b/comparisons/ncbi/flag_u_set_b_ncbi2.txt"
+
+parallel --jobs $(echo $n_cores) --eta '
+  count={#}
+  line={1}
+
+  temp_file1="1_$count.fasta"
+  temp_file2="2_$count.fasta"
+
+  sed -n -e "/$line/,/>NODE/ p" flag_u_set_b_ensembl.fasta > "$temp_file1"
+  if [ -s "$temp_file1" ]; then
+    head -n -1 "$temp_file1" > "$temp_file2"
+  fi' :::: "$file"
+
+cat 2_*.fasta > flag_u_set_b_ncbi.fasta
+
+rm 1_*.fasta
+rm 2_*.fasta
+```
+
+
+##Filter #3 - Removing transcripts aligned to MT chr or scaffold sequences (NCBI)##
+```{r, eval=FALSE}
+folder_a <- "/test/set_a"
+folder_b <- "/test/set_b"
+
+
+#Set A
+ncbi_a<-read.table(paste0(folder_a,"/comparisons/ncbi/set_a_ncbi.annotated.gtf"), sep ="\t")
+
+ncbi_flag_u_a<-read.table(paste0(folder_a,"/comparisons/ncbi/unknown_set_a_ncbi.annotated.gtf"), sep ="\t")
+
+un_chr_a<-ncbi_flag_u_a[startsWith(ncbi_flag_u_a$V1, "Leftover"),]
+un_chr_a<-rbind(un_chr_a,ncbi_flag_u_a[startsWith(ncbi_flag_u_a$V1, "MT"),] )
+
+ncbi_flag_u_a$remove<-ncbi_flag_u_a$V1 %in% un_chr_a$V1
+
+ncbi_flag_u_a<-subset(ncbi_flag_u_a, ncbi_flag_u_a$remove == FALSE)
+
+ncbi_flag_u_a$gene_name <- word(ncbi_flag_u_a$V9, start = 3, end = 4, sep = " ")
+ncbi_flag_u_a$gene_name <- paste(ncbi_flag_u_a$V1, ncbi_flag_u_a$gene_name)
+
+ncbi_exons_a<-subset(ncbi_a, ncbi_a$V3 == "exon")
+
+ncbi_exons_a$gene_name <- word(ncbi_exons_a$V9, start = 3, end = 4, sep = " ")
+ncbi_exons_a$gene_name <- paste(ncbi_exons_a$V1, ncbi_exons_a$gene_name)
+
+ncbi_exons_a$keep<-ncbi_exons_a$gene_name %in% ncbi_flag_u_a$gene_name
+
+ncbi_exons_a2<-subset(ncbi_exons_a, ncbi_exons_a$keep == TRUE)
+
+ncbi_a$keep<-ncbi_a$V9 %in% ncbi_flag_u_a$V9
+
+ncbi_a$keep2<-ncbi_a$V9 %in% ncbi_exons_a2$V9
+
+ncbi_a2<-subset(ncbi_a, ncbi_a$keep == TRUE | ncbi_a$keep2 == TRUE)
+
+ncbi_a3<-ncbi_a2[,-c(10:11)]
+
+write.table(ncbi_a3, paste0(folder_a, "/comparisons/ncbi/set_a_ncbi_filtered_3.gff3"), sep = "\t" , col.names = FALSE, row.names =  FALSE, quote = FALSE)
+
+
+#Set B
+ncbi_b<-read.table(paste0(folder_b,"/comparisons/ncbi/set_b_ncbi.annotated.gtf"), sep ="\t")
+
+ncbi_flag_u_b<-read.table(paste0(folder_b,"/comparisons/ncbi/unknown_set_b_ncbi.annotated.gtf"), sep ="\t")
+
+un_chr_b<-ncbi_flag_u_b[startsWith(ncbi_flag_u_b$V1, "Leftover"),]
+un_chr_b<-rbind(un_chr_b,ncbi_flag_u_b[startsWith(ncbi_flag_u_b$V1, "MT"),] )
+
+ncbi_flag_u_b$remove<-ncbi_flag_u_b$V1 %in% un_chr_b$V1
+
+ncbi_flag_u_b<-subset(ncbi_flag_u_b, ncbi_flag_u_b$remove == FALSE)
+
+ncbi_flag_u_b$gene_name <- word(ncbi_flag_u_b$V9, start = 3, end = 4, sep = " ")
+ncbi_flag_u_b$gene_name <- paste(ncbi_flag_u_b$V1, ncbi_flag_u_b$gene_name)
+
+ncbi_exons_b<-subset(ncbi_b, ncbi_b$V3 == "exon")
+
+ncbi_exons_b$gene_name <- word(ncbi_exons_b$V9, start = 3, end = 4, sep = " ")
+ncbi_exons_b$gene_name <- paste(ncbi_exons_b$V1, ncbi_exons_b$gene_name)
+
+ncbi_exons_b$keep<-ncbi_exons_b$gene_name %in% ncbi_flag_u_b$gene_name
+
+ncbi_exons_b2<-subset(ncbi_exons_b, ncbi_exons_b$keep == TRUE)
+
+ncbi_b$keep<-ncbi_b$V9 %in% ncbi_flag_u_b$V9
+
+ncbi_b$keep2<-ncbi_b$V9 %in% ncbi_exons_b2$V9
+
+ncbi_b2<-subset(ncbi_b, ncbi_b$keep == TRUE | ncbi_b$keep2 == TRUE)
+
+ncbi_b3<-ncbi_b2[,-c(10:11)]
+
+write.table(ncbi_b3, paste0(folder_b, "/comparisons/ncbi/set_b_ncbi_filtered_3.gff3"), sep = "\t" , col.names = FALSE, row.names =  FALSE, quote = FALSE)
+
+#summary clean GFF file NCBI
+
+print("Set A summary")
+nrow(subset(ncbi_a3, ncbi_a3$V3 == "transcript"))
+print("Set B summary")
+nrow(subset(ncbi_b3, ncbi_b3$V3 == "transcript"))
+
+save.image(file=paste0(folder_a,"/R_outputs/Rscript_3.RData"))
+save.image(file=paste0(folder_b,"/R_outputs/Rscript_3.RData"))
+
+print("3rd filtering finished")
+
+
+```
+
+
+##Formating new unknown gtf file before compare with lncRNA database (NONCODEv5) - Set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+
+cd $folder_a/comparisons/ncbi
+sed -e 's/\NODE/"NODE/g' set_a_ncbi_filtered_3.gff3 > set_a_ncbi_filtered_3_2.gtf
+sed -e 's/\; xloc/"; xloc/g' set_a_ncbi_filtered_3_2.gtf > set_a_ncbi_filtered_3_3.gtf
+sed -e 's/\; gene_id/"; gene_id/g' set_a_ncbi_filtered_3_3.gtf > set_a_ncbi_filtered_3_4.gtf
+sed -e 's/\; exon_number/"; exon_number/g' set_a_ncbi_filtered_3_4.gtf > set_a_ncbi_filtered_3_5.gtf
+sed -e 's/\; class_code/"; class_code/g' set_a_ncbi_filtered_3_5.gtf > set_a_ncbi_filtered_3_6.gtf
+mv set_a_ncbi_filtered_3_6.gtf set_a_ncbi_filtered_4.gtf
+rm set_a_ncbi_filtered_3_*.gtf
+```
+
+
+##Formating new unknown gtf file before compare with lncRNA database (NONCODEv5) - Set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+
+cd $folder_b/comparisons/ncbi
+sed -e 's/\NODE/"NODE/g' set_b_ncbi_filtered_3.gff3 > set_b_ncbi_filtered_3_2.gtf
+sed -e 's/\; xloc/"; xloc/g' set_b_ncbi_filtered_3_2.gtf > set_b_ncbi_filtered_3_3.gtf
+sed -e 's/\; gene_id/"; gene_id/g' set_b_ncbi_filtered_3_3.gtf > set_b_ncbi_filtered_3_4.gtf
+sed -e 's/\; exon_number/"; exon_number/g' set_b_ncbi_filtered_3_4.gtf > set_b_ncbi_filtered_3_5.gtf
+sed -e 's/\; class_code/"; class_code/g' set_b_ncbi_filtered_3_5.gtf > set_b_ncbi_filtered_3_6.gtf
+mv set_b_ncbi_filtered_3_6.gtf set_b_ncbi_filtered_4.gtf
+rm set_b_ncbi_filtered_3_*.gtf
+```
+
+
+##Compare our gff file with lncRNA database (NONCODEv5) - Set A##
+```{bash, eval=FALSE}
+
+cd $folder_a/comparisons/lncRNA
+
+/gffcompare/gffcompare -r $gtf_lncRNA -T $folder_a/comparisons/ncbi/set_a_ncbi_filtered_4.gtf -o "set_a_lncRNA"
+
+awk '/class_code "u";/{print}' set_a_lncRNA.annotated.gtf > unknown_set_a_lncRNA.annotated.gtf
+#   total unknown
+wc -l unknown_set_a_lncRNA.annotated.gtf
+
+```
+
+
+##Compare our gff file with lncRNA database (NONCODEv5) - Set B##
+```{bash, eval=FALSE}
+
+cd $folder_b/comparisons/lncRNA
+
+/gffcompare/gffcompare -r $gtf_lncRNA -T $folder_b/comparisons/ncbi/set_b_ncbi_filtered_4.gtf -o "set_b_lncRNA"
+
+awk '/class_code "u";/{print}' set_b_lncRNA.annotated.gtf > unknown_set_b_lncRNA.annotated.gtf
+#   total unknown
+wc -l unknown_set_b_lncRNA.annotated.gtf
+```
+
+
+##Filter #4 - Removing transcripts aligned to known lncRNA (NONCODEv5)##
+```{r, eval=FALSE}
+folder_a <- "/test/set_a"
+folder_b <- "/test/set_b"
+
+
+#Set A
+lncRNA_a<-read.table(paste0(folder_a,"/comparisons/lncRNA/set_a_lncRNA.annotated.gtf"), sep ="\t")
+
+lncRNA_flag_u_a<-read.table(paste0(folder_a,"/comparisons/lncRNA/unknown_set_a_lncRNA.annotated.gtf"), sep ="\t")
+
+lncRNA_flag_u_a$gene_name <- word(lncRNA_flag_u_a$V9, start = 3, end = 4, sep = " ")
+lncRNA_flag_u_a$gene_name <- paste(lncRNA_flag_u_a$V1, lncRNA_flag_u_a$gene_name)
+
+lncRNA_transcript_a<-subset(lncRNA_a, lncRNA_a$V3 == "transcript")
+
+lncRNA_transcript_a$gene_name <- word(lncRNA_transcript_a$V9, start = 3, end = 4, sep = " ")
+lncRNA_transcript_a$gene_name <- paste(lncRNA_transcript_a$V1, lncRNA_transcript_a$gene_name)
+
+lncRNA_transcript_a$keep<-lncRNA_transcript_a$gene_name %in% lncRNA_flag_u_a$gene_name
+
+lncRNA_transcript_a2<-subset(lncRNA_transcript_a, lncRNA_transcript_a$keep == TRUE)
+lncRNA_exons_a<-subset(lncRNA_a, lncRNA_a$V3 == "exon")
+
+lncRNA_exons_a$gene_name <- word(lncRNA_exons_a$V9, start = 3, end = 4, sep = " ")
+lncRNA_exons_a$gene_name <- paste(lncRNA_exons_a$V1, lncRNA_exons_a$gene_name)
+
+lncRNA_exons_a$keep<-lncRNA_exons_a$gene_name %in% lncRNA_transcript_a2$gene_name
+lncRNA_exons_a2<-subset(lncRNA_exons_a, lncRNA_exons_a$keep == TRUE)
+
+lncRNA_a$keep<-lncRNA_a$V9 %in% lncRNA_transcript_a2$V9
+lncRNA_a$keep2<-lncRNA_a$V9 %in% lncRNA_exons_a2$V9
+
+lncRNA_a2<-subset(lncRNA_a, lncRNA_a$keep == TRUE | lncRNA_a$keep2 == TRUE)
+lncRNA_a3<-lncRNA_a2[,-c(10:11)]
+
+
+#Set B
+lncRNA_b<-read.table(paste0(folder_b,"/comparisons/lncRNA/set_b_lncRNA.annotated.gtf"), sep ="\t")
+
+lncRNA_flag_u_b<-read.table(paste0(folder_b,"/comparisons/lncRNA/unknown_set_b_lncRNA.annotated.gtf"), sep ="\t")
+
+lncRNA_flag_u_b$gene_name <- word(lncRNA_flag_u_b$V9, start = 3, end = 4, sep = " ")
+lncRNA_flag_u_b$gene_name <- paste(lncRNA_flag_u_b$V1, lncRNA_flag_u_b$gene_name)
+
+lncRNA_transcript_b<-subset(lncRNA_b, lncRNA_b$V3 == "transcript")
+
+lncRNA_transcript_b$gene_name <- word(lncRNA_transcript_b$V9, start = 3, end = 4, sep = " ")
+lncRNA_transcript_b$gene_name <- paste(lncRNA_transcript_b$V1, lncRNA_transcript_b$gene_name)
+
+lncRNA_transcript_b$keep<-lncRNA_transcript_b$gene_name %in% lncRNA_flag_u_b$gene_name
+
+lncRNA_transcript_b2<-subset(lncRNA_transcript_b, lncRNA_transcript_b$keep == TRUE)
+lncRNA_exons_b<-subset(lncRNA_b, lncRNA_b$V3 == "exon")
+
+lncRNA_exons_b$gene_name <- word(lncRNA_exons_b$V9, start = 3, end = 4, sep = " ")
+lncRNA_exons_b$gene_name <- paste(lncRNA_exons_b$V1, lncRNA_exons_b$gene_name)
+
+lncRNA_exons_b$keep<-lncRNA_exons_b$gene_name %in% lncRNA_transcript_b2$gene_name
+lncRNA_exons_b2<-subset(lncRNA_exons_b, lncRNA_exons_b$keep == TRUE)
+
+lncRNA_b$keep<-lncRNA_b$V9 %in% lncRNA_transcript_b2$V9
+lncRNA_b$keep2<-lncRNA_b$V9 %in% lncRNA_exons_b2$V9
+
+lncRNA_b2<-subset(lncRNA_b, lncRNA_b$keep == TRUE | lncRNA_b$keep2 == TRUE)
+lncRNA_b3<-lncRNA_b2[,-c(10:11)]
+
+
+#summary clean GFF file lncRNA
+
+print("Set A summary")
+nrow(subset(lncRNA_a3, lncRNA_a3$V3 == "transcript"))
+print("Set B summary")
+nrow(subset(lncRNA_b3, lncRNA_b3$V3 == "transcript"))
+
+write.table(lncRNA_a3, paste0(folder_a, "/comparisons/lncRNA/set_a_lncRNA_filtered.gff3"), quote = FALSE, col.names = FALSE, sep = "\t", row.names = FALSE)
+write.table(lncRNA_b3, paste0(folder_b, "/comparisons/lncRNA/set_b_lncRNA_filtered.gff3"), quote = FALSE, col.names = FALSE, sep = "\t", row.names = FALSE)
+
+save.image(file=paste0(folder_a,"/R_outputs/Rscript_4.RData"))
+save.image(file=paste0(folder_b,"/R_outputs/Rscript_4.RData"))
+
+print("4th filtering finished")
+
+```
+
+
+##Putting quotes before filter - Set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+
+cd $folder_a/comparisons/lncRNA
+sed -e 's/\NODE/"NODE/g' set_a_lncRNA_filtered.gff3 > set_a_lncRNA_filtered_2.gff3
+sed -e 's/\; xloc /"; xloc "/g' set_a_lncRNA_filtered_2.gff3 > set_a_lncRNA_filtered_3.gff3
+sed -e 's/\; gene_id/"; gene_id/g' set_a_lncRNA_filtered_3.gff3 > set_a_lncRNA_filtered_4.gff3
+sed -E 's/; exon_number ([[:alnum:]]+)/"; exon_number "\1"/g' set_a_lncRNA_filtered_4.gff3 > set_a_lncRNA_filtered_5.gff3
+sed -e 's/\; class_code u/"; class_code "u"/g' set_a_lncRNA_filtered_5.gff3 > set_a_lncRNA_filtered_6.gff3
+sed -E 's/; tss_id TSS([[:alnum:]]+)/; tss_id "TSS\1"/g' set_a_lncRNA_filtered_6.gff3 > set_a_lncRNA_filtered_7.gff3
+
+mv set_a_lncRNA_filtered_7.gff3 set_a_all_flags_u.gff3
+rm set_a_lncRNA_filtered_*.gff3
+```
+
+
+##Putting quotes before filter - Set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+
+cd $folder_b/comparisons/lncRNA
+sed -e 's/\NODE/"NODE/g' set_b_lncRNA_filtered.gff3 > set_b_lncRNA_filtered_2.gff3
+sed -e 's/\; xloc /"; xloc "/g' set_b_lncRNA_filtered_2.gff3 > set_b_lncRNA_filtered_3.gff3
+sed -e 's/\; gene_id/"; gene_id/g' set_b_lncRNA_filtered_3.gff3 > set_b_lncRNA_filtered_4.gff3
+sed -E 's/; exon_number ([[:alnum:]]+)/"; exon_number "\1"/g' set_b_lncRNA_filtered_4.gff3 > set_b_lncRNA_filtered_5.gff3
+sed -e 's/\; class_code u/"; class_code "u"/g' set_b_lncRNA_filtered_5.gff3 > set_b_lncRNA_filtered_6.gff3
+sed -E 's/; tss_id TSS([[:alnum:]]+)/; tss_id "TSS\1"/g' set_b_lncRNA_filtered_6.gff3 > set_b_lncRNA_filtered_7.gff3
+
+mv set_b_lncRNA_filtered_7.gff3 set_b_all_flags_u.gff3
+rm set_b_lncRNA_filtered_*.gff3
+```
+
+
+##Filtering GTF file (genes with >300bp & >1 exon) - Set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+
+cd $folder_a/comparisons/lncRNA
+#remove transcripts less than 300bp
+/gffread/gffread -l 300 set_a_all_flags_u.gff3 -o set_a_all_flags_u_2.gff3
+#discard single exons
+/gffread/gffread -U -T set_a_all_flags_u_2.gff3 -o set_a_all_flags_u_3.gtf
+```
+
+
+##Filtering GTF file (genes with >300bp & >1 exon) - Set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+
+##Filtering GTF file (genes with >300bp & >1 exon) - Set B##
+cd $folder_b/comparisons/lncRNA
+#remove transcripts less than 300bp
+/gffread/gffread -l 300 set_b_all_flags_u.gff3 -o set_b_all_flags_u_2.gff3
+#discard single exons
+/gffread/gffread -U -T set_b_all_flags_u_2.gff3 -o set_b_all_flags_u_3.gtf
+```
+
+
+##Filter #5 - Removing transcripts close (<5kb upstream/downstream) to known genes (ENSEMBL)##
+```{r, eval=FALSE}
+
+folder_a <- "/test/set_a"
+folder_b <- "/test/set_b"
+gtf_ensembl <- "/reference/annotation/Bos_taurus.ARS-UCD1.3.111.gtf"
+
+#Set A
+lncRNA_4_a <- read.table(paste0(folder_a,"/comparisons/lncRNA/set_a_all_flags_u_3.gtf"), sep ="\t")
+lncRNA_4_a_transcripts <- subset(lncRNA_4_a, lncRNA_4_a$V3 == "transcript")
+lncRNA_4_a_transcripts$V1<-as.factor(lncRNA_4_a_transcripts$V1)
+lncRNA_4_a_transcripts$V7<-as.factor(lncRNA_4_a_transcripts$V7)
+
+
+lncRNA_4_a_transcripts_granges <- GRanges(
+  seqnames = lncRNA_4_a_transcripts$V1,
+  ranges = IRanges(
+    start = lncRNA_4_a_transcripts$V4,
+    end = lncRNA_4_a_transcripts$V5,
+    names = lncRNA_4_a_transcripts$V9
+  ),
+  strand = lncRNA_4_a_transcripts$V7
+)
+
+dist_filter<-5000
+
+official_annotation_ensembl<-as.data.frame(rtracklayer::import(gtf_ensembl))
+
+official_annotation_ensembl_granges <- GRanges(
+  seqnames = official_annotation_ensembl$seqnames,
+  ranges = IRanges(
+    start = official_annotation_ensembl$start,
+    end = official_annotation_ensembl$end
+  ),
+  strand = official_annotation_ensembl$strand
+)
+
+no_overlaps_a<- !overlapsAny(lncRNA_4_a_transcripts_granges, official_annotation_ensembl_granges,
+    maxgap=dist_filter,
+    ignore.strand=TRUE)
+
+no_overlapping_transcripts_a <- lncRNA_4_a_transcripts_granges[(no_overlaps_a)]
+
+no_overlapping_transcripts_a_df <- data.frame(
+  seqnames = seqnames(no_overlapping_transcripts_a),
+  start = start(no_overlapping_transcripts_a),
+  end = end(no_overlapping_transcripts_a),
+  strand = strand(no_overlapping_transcripts_a),
+  names = names(no_overlapping_transcripts_a)
+)
+
+lncRNA_4_a_transcripts$keep<- lncRNA_4_a_transcripts$V9 %in% no_overlapping_transcripts_a_df$names
+lncRNA_4_a_transcripts<-subset(lncRNA_4_a_transcripts, lncRNA_4_a_transcripts$keep == TRUE)
+lncRNA_4_a_exons <- subset(lncRNA_4_a, lncRNA_4_a$V3 == "exon")
+
+lncRNA_4_a_transcripts$gene_name <- word(lncRNA_4_a_transcripts$V9, start = 1, end = 1, sep = ";")
+lncRNA_4_a_transcripts$gene_name <- gsub('ID=','',lncRNA_4_a_transcripts$gene_name)
+lncRNA_4_a_transcripts$gene_name <- gsub(';','',lncRNA_4_a_transcripts$gene_name)
+lncRNA_4_a_exons$gene_name <- lncRNA_4_a_exons$V9
+lncRNA_4_a_exons$gene_name <- word(lncRNA_4_a_exons$gene_name, start = 1, end = 1, sep = ";")
+lncRNA_4_a_exons$gene_name <- gsub('Parent=','',lncRNA_4_a_exons$gene_name)
+lncRNA_4_a_exons$V1<-as.factor(lncRNA_4_a_exons$V1)
+lncRNA_4_a_transcripts_exons<-data.frame()
+
+lncRNA_4_a_transcripts_exons <- merge(lncRNA_4_a_transcripts[,c(1, 3:5, 11)], lncRNA_4_a_exons[,c(1, 3:5, 10)], by= "gene_name",  all = TRUE)
+
+lncRNA_4_a_transcripts_exons <- lncRNA_4_a_transcripts_exons[!is.na(lncRNA_4_a_transcripts_exons$V1.x), ]
+
+lncRNA_4_a_transcripts_exons$remove = NA
+
+
+for (i in 1:nrow(lncRNA_4_a_transcripts_exons)) {
+  if (lncRNA_4_a_transcripts_exons[i,2] == lncRNA_4_a_transcripts_exons[i,6] &
+      lncRNA_4_a_transcripts_exons[i,4] == lncRNA_4_a_transcripts_exons[i,8] &
+      lncRNA_4_a_transcripts_exons[i,5] == lncRNA_4_a_transcripts_exons[i,9]) {
+    lncRNA_4_a_transcripts_exons[i,"remove"]<- TRUE
+  }
+  else {
+    lncRNA_4_a_transcripts_exons[i,"remove"]<- FALSE
+  }
+}
+
+lncRNA_4_a_transcripts_exons <- subset(lncRNA_4_a_transcripts_exons, lncRNA_4_a_transcripts_exons$remove == FALSE)
+
+lncRNA_4_a$gene_name <- word(lncRNA_4_a$V9, start = 1, end = 1, sep = ";")
+lncRNA_4_a$gene_name <- gsub('ID=','',lncRNA_4_a$gene_name)
+lncRNA_4_a$gene_name <- gsub('Parent=','',lncRNA_4_a$gene_name)
+
+lncRNA_4_a$remove <- NA
+
+for (i in 1:nrow(lncRNA_4_a)){
+  if (lncRNA_4_a[i, 10] %in% lncRNA_4_a_transcripts_exons$gene_name){
+    lncRNA_4_a[i, "remove"] <- FALSE
+  }
+  else {
+    lncRNA_4_a[i, "remove"] <- TRUE
+  }
+}
+
+lncRNA_4_a <- subset(lncRNA_4_a, lncRNA_4_a$remove == FALSE)
+
+lncRNA_4_a <- lncRNA_4_a[,1:9]
+
+
+#Set B
+
+lncRNA_4_b <- read.table(paste0(folder_b,"/comparisons/lncRNA/set_b_all_flags_u_3.gtf"), sep ="\t")
+lncRNA_4_b_transcripts <- subset(lncRNA_4_b, lncRNA_4_b$V3 == "transcript")
+lncRNA_4_b_transcripts$V1<-as.factor(lncRNA_4_b_transcripts$V1)
+lncRNA_4_b_transcripts$V7<-as.factor(lncRNA_4_b_transcripts$V7)
+
+
+lncRNA_4_b_transcripts_granges <- GRanges(
+  seqnames = lncRNA_4_b_transcripts$V1,
+  ranges = IRanges(
+    start = lncRNA_4_b_transcripts$V4,
+    end = lncRNA_4_b_transcripts$V5,
+    names = lncRNA_4_b_transcripts$V9
+  ),
+  strand = lncRNA_4_b_transcripts$V7
+)
+
+no_overlaps_b<- !overlapsAny(lncRNA_4_b_transcripts_granges, official_annotation_ensembl_granges,
+    maxgap=dist_filter,
+    ignore.strand=TRUE)
+
+no_overlapping_transcripts_b <- lncRNA_4_b_transcripts_granges[(no_overlaps_b)]
+
+no_overlapping_transcripts_b_df <- data.frame(
+  seqnames = seqnames(no_overlapping_transcripts_b),
+  start = start(no_overlapping_transcripts_b),
+  end = end(no_overlapping_transcripts_b),
+  strand = strand(no_overlapping_transcripts_b),
+  names = names(no_overlapping_transcripts_b)
+)
+
+lncRNA_4_b_transcripts$keep<- lncRNA_4_b_transcripts$V9 %in% no_overlapping_transcripts_b_df$names
+lncRNA_4_b_transcripts<-subset(lncRNA_4_b_transcripts, lncRNA_4_b_transcripts$keep == TRUE)
+lncRNA_4_b_exons <- subset(lncRNA_4_b, lncRNA_4_b$V3 == "exon")
+
+lncRNA_4_b_transcripts$gene_name <- word(lncRNA_4_b_transcripts$V9, start = 1, end = 1, sep = ";")
+lncRNA_4_b_transcripts$gene_name <- gsub('ID=','',lncRNA_4_b_transcripts$gene_name)
+lncRNA_4_b_transcripts$gene_name <- gsub(';','',lncRNA_4_b_transcripts$gene_name)
+lncRNA_4_b_exons$gene_name <- lncRNA_4_b_exons$V9
+lncRNA_4_b_exons$gene_name <- word(lncRNA_4_b_exons$gene_name, start = 1, end = 1, sep = ";")
+lncRNA_4_b_exons$gene_name <- gsub('Parent=','',lncRNA_4_b_exons$gene_name)
+lncRNA_4_b_exons$V1<-as.factor(lncRNA_4_b_exons$V1)
+lncRNA_4_b_transcripts_exons<-data.frame()
+
+lncRNA_4_b_transcripts_exons <- merge(lncRNA_4_b_transcripts[,c(1, 3:5, 11)], lncRNA_4_b_exons[,c(1, 3:5, 10)], by= "gene_name",  all = TRUE)
+
+lncRNA_4_b_transcripts_exons <- lncRNA_4_b_transcripts_exons[!is.na(lncRNA_4_b_transcripts_exons$V1.x), ]
+
+lncRNA_4_b_transcripts_exons$remove = NA
+
+
+for (i in 1:nrow(lncRNA_4_b_transcripts_exons)) {
+  if (lncRNA_4_b_transcripts_exons[i,2] == lncRNA_4_b_transcripts_exons[i,6] &
+      lncRNA_4_b_transcripts_exons[i,4] == lncRNA_4_b_transcripts_exons[i,8] &
+      lncRNA_4_b_transcripts_exons[i,5] == lncRNA_4_b_transcripts_exons[i,9]) {
+    lncRNA_4_b_transcripts_exons[i,"remove"]<- TRUE
+  }
+  else {
+    lncRNA_4_b_transcripts_exons[i,"remove"]<- FALSE
+  }
+}
+
+lncRNA_4_b_transcripts_exons <- subset(lncRNA_4_b_transcripts_exons, lncRNA_4_b_transcripts_exons$remove == FALSE)
+
+lncRNA_4_b$gene_name <- word(lncRNA_4_b$V9, start = 1, end = 1, sep = ";")
+lncRNA_4_b$gene_name <- gsub('ID=','',lncRNA_4_b$gene_name)
+lncRNA_4_b$gene_name <- gsub('Parent=','',lncRNA_4_b$gene_name)
+
+lncRNA_4_b$remove <- NA
+
+for (i in 1:nrow(lncRNA_4_b)){
+  if (lncRNA_4_b[i, 10] %in% lncRNA_4_b_transcripts_exons$gene_name){
+    lncRNA_4_b[i, "remove"] <- FALSE
+  }
+  else {
+    lncRNA_4_b[i, "remove"] <- TRUE
+  }
+}
+
+lncRNA_4_b <- subset(lncRNA_4_b, lncRNA_4_b$remove == FALSE)
+
+lncRNA_4_b <- lncRNA_4_b[,1:9]
+
+##Summary
+only_transcripts_a <- subset(lncRNA_4_a, lncRNA_4_a$V3 == "transcript")
+only_transcripts_b <- subset(lncRNA_4_b, lncRNA_4_b$V3 == "transcript")
+print("Unknwon transcripts - Set A")
+nrow(only_transcripts_a)
+print("Unknwon transcripts - Set B")
+nrow(only_transcripts_b)
+
+write.table(lncRNA_4_a, paste0(folder_a, "/comparisons/lncRNA/set_a_all_flags_u_clean.gtf"), col.names = F, row.names = F, quote = F, sep = "\t")
+write.table(lncRNA_4_b, paste0(folder_b, "/comparisons/lncRNA/set_b_all_flags_u_clean.gtf"), col.names = F, row.names = F, quote = F, sep = "\t")
+
+save.image(file=paste0(folder_a,"/R_outputs/Rscript_5.RData"))
+save.image(file=paste0(folder_b,"/R_outputs/Rscript_5.RData"))
+
+print("5th filtering finished")
+```
+
+
+## Putting quotes before concatenate gtf - Set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+
+cd $folder_a/comparisons/lncRNA
+
+sed -e 's/\NODE/"NODE/g' set_a_all_flags_u_clean.gtf > set_a_all_flags_u_clean_2.gtf
+sed -e 's/\; gene_id/"; gene_id/g' set_a_all_flags_u_clean_2.gtf > set_a_all_flags_u_clean_3.gtf
+sed -E 's/.path([[:alnum:]]+)/.path\1"/g' set_a_all_flags_u_clean_3.gtf > set_a_all_flags_u_clean_4.gtf
+
+mv set_a_all_flags_u_clean_4.gtf set_a_all_flags_u_clean2.gtf
+rm set_a_all_flags_u_clean_*.gtf
+```
+
+
+## Putting quotes before concatenate gtf - Set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+cd $folder_b/comparisons/lncRNA
+
+sed -e 's/\NODE/"NODE/g' set_b_all_flags_u_clean.gtf > set_b_all_flags_u_clean_2.gtf
+sed -e 's/\; gene_id/"; gene_id/g' set_b_all_flags_u_clean_2.gtf > set_b_all_flags_u_clean_3.gtf
+sed -E 's/.path([[:alnum:]]+)/.path\1"/g' set_b_all_flags_u_clean_3.gtf > set_b_all_flags_u_clean_4.gtf
+
+mv set_b_all_flags_u_clean_4.gtf set_b_all_flags_u_clean2.gtf
+rm set_b_all_flags_u_clean_*.gtf
+```
+
+
+##Concatenating gtf - Set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+
+cd $folder_a/comparisons/lncRNA
+
+#concatenating gtf overlapping exon boundaries (SET A)
+/gffread/gffread -MKY --cset -T set_a_all_flags_u_clean2.gtf -o set_a_all_flags_u_clean_concatenated.gtf -d info_dup_set_a 
+#discard single exons (SET A)
+/gffread/gffread -U -T set_a_all_flags_u_clean_concatenated.gtf -o set_a_all_flags_u_clean_concatenated2.gtf 
+```
+
+
+##Concatenating gtf - Set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+
+cd $folder_b/comparisons/lncRNA
+
+#concatenating gtf overlapping exon boundaries (SET B)
+/gffread/gffread -MKY --cset -T set_b_all_flags_u_clean2.gtf -o set_b_all_flags_u_clean_concatenated.gtf -d info_dup_set_b
+#discard single exons (SET B)
+/gffread/gffread -U -T set_b_all_flags_u_clean_concatenated.gtf -o set_b_all_flags_u_clean_concatenated2.gtf 
+```
+
+
+##Quality filtering (remove transcripts without count) - Set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+n_cores=30
+
+cd $folder_a/SR_fastq/alignment
+
+for sample in $(ls $folder_a/SR_fastq/alignment/*_alignment.filtered.sorted.undup.bam | sort); do
+echo $sample
+sample_name=$(basename "$sample" | cut -f 1 -d '.')
+sample_name=$(echo $sample_name | awk -F '_alignment' '{print $1}' )
+echo $sample_name
+/subread-2.0.6-Linux-x86_64/bin/featureCounts -s 1 -a $folder_a/comparisons/lncRNA/set_a_all_flags_u_clean_concatenated2.gtf -o $folder_a/counting/filter_$(echo $sample_name).count -F 'GTF' -t 'exon' -g 'gene_id' --ignoreDup -p -T $(echo $n_cores) $sample
+done;
+
+```
+
+
+##Quality filtering (remove transcripts without count) - Set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+n_cores=30
+
+cd $folder_b/SR_fastq/alignment
+
+for sample in $(ls $folder_b/SR_fastq/alignment/*_alignment.filtered.sorted.undup.bam | sort); do
+echo $sample
+sample_name=$(basename "$sample" | cut -f 1 -d '.')
+sample_name=$(echo $sample_name | awk -F '_alignment' '{print $1}' )
+echo $sample_name
+/subread-2.0.6-Linux-x86_64/bin/featureCounts -s 1 -a $folder_b/comparisons/lncRNA/set_b_all_flags_u_clean_concatenated2.gtf -o $folder_b/counting/filter_$(echo $sample_name).count -F 'GTF' -t 'exon' -g 'gene_id' --ignoreDup -p -T $(echo $n_cores) $sample
+done;
+```
+
+
+##Filter #6 - Quality filtering - Removing transcripts without counts in more than 90% of samples (ENSEMBL)##
+```{r, eval=FALSE}
+folder_a <- "/test/set_a"
+folder_b <- "/test/set_b"
+
+
+#set A
+files_a<-list.files(paste0(folder_a, "/counting/"), recursive=T, pattern=".count", full.names = TRUE)
+files_a<-files_a[grep("filter_", files_a, invert = FALSE)]
+files_a<-files_a[grep("summary", files_a, invert = TRUE)]
+length(files_a)
+count_data_a<-data.frame(matrix())
+for (n in 1:length(files_a)) {
+  count_a<-read.delim(files_a[n], header=TRUE, sep= "\t", stringsAsFactors = FALSE, comment.char= "#")
+  count_a<-count_a[,c(1,7)]
+  count_data_a<-cbind(count_data_a,count_a)
+}
+rownames(count_data_a)<-count_data_a[,2]
+count_data_a<-count_data_a[,seq(from = 3, to = ncol(count_data_a), by = 2)]
+
+write.csv(count_data_a,file=paste0(folder_a, "/R_outputs/set_a_counting.csv"),quote = FALSE, row.names = TRUE)
+
+
+file_a<-read.csv(paste0(folder_a, "/R_outputs/set_a_counting.csv"), sep = ",", header = T)
+rownames(file_a)<-file_a$X
+file_a<-file_a[,2:ncol(file_a)]
+file_a$count<-0
+file_a[,1:ncol(file_a)] = lapply(file_a[,1:ncol(file_a)], FUN = function(y){as.numeric(y)})
+
+for (i in 1:nrow(file_a)) {
+  for (j in 1:ncol(file_a)){
+    if (file_a[i,j] >=1) {
+      file_a[i,(ncol(file_a))]=file_a[i,(ncol(file_a))]+1
+    }
+  }
+}
+
+file_a$maxcount<- rowSums(file_a[,1:ncol(file_a)-1])
+transcripts_a_not_counted<-subset(file_a,file_a$count <= (0.10*ncol(file_a))) # +90% of samples without counting
+transcripts_a_counted<-subset(file_a,file_a$count > (0.10*ncol(file_a)))
+transcripts_a_not_counted_b<-as.data.frame(transcripts_a_not_counted[,"count"])
+transcripts_a_not_counted_b$transcript<-rownames(transcripts_a_not_counted)
+transcripts_a_not_counted_b<-transcripts_a_not_counted_b[,c(2,1)]
+colnames(transcripts_a_not_counted_b)<- c("transcript", "count")
+transcripts_a_not_counted_c<-transcripts_a_not_counted_b[,1]
+
+
+gtf_a<-read.table(paste0(folder_a, "/comparisons/lncRNA/set_a_all_flags_u_clean_concatenated2.gtf"), sep = "\t")
+gtf_a$gene_id<-word(gtf_a$V9, start = 2, end = 2, sep = ";")
+gtf_a$gene_id<-gsub("gene_id ", "", gtf_a$gene_id)
+gtf_a$gene_id<-gsub(" ", "", gtf_a$gene_id)
+gtf_a$transcript<-word(gtf_a$V9, start = 1, end = 1, sep = ";")
+gtf_a$transcript<-gsub("transcript_id ", "", gtf_a$transcript)
+gtf_a$transcript<-gsub(" ", "", gtf_a$transcript)
+gtf_a_transcripts<-gtf_a[gtf_a$V3 == "transcript",]
+
+
+#Set B
+files_b<-list.files(paste0(folder_b, "/counting/"), recursive=T, pattern=".count", full.names = TRUE)
+files_b<-files_b[grep("filter_", files_b, invert = FALSE)]
+files_b<-files_b[grep("summary", files_b, invert = TRUE)]
+length(files_b)
+count_data_b<-data.frame(matrix())
+for (n in 1:length(files_b)) {
+  count_b<-read.delim(files_b[n], header=TRUE, sep= "\t", stringsAsFactors = FALSE, comment.char= "#")
+  count_b<-count_b[,c(1,7)]
+  count_data_b<-cbind(count_data_b,count_b)
+}
+rownames(count_data_b)<-count_data_b[,2]
+count_data_b<-count_data_b[,seq(from = 3, to = ncol(count_data_b), by = 2)]
+
+write.csv(count_data_b,file=paste0(folder_b, "/R_outputs/set_b_counting.csv"),quote = FALSE, row.names = TRUE)
+
+
+file_b<-read.csv(paste0(folder_b, "/R_outputs/set_b_counting.txt"), sep = ",", header = T)
+rownames(file_b)<-file_b$X
+file_b<-file_b[,2:ncol(file_b)]
+file_b$count<-0
+file_b[,1:ncol(file_b)] = lapply(file_b[,1:ncol(file_b)], FUN = function(y){as.numeric(y)})
+
+for (i in 1:nrow(file_b)) {
+  for (j in 1:ncol(file_b)){
+    if (file_b[i,j] >=1) {
+      file_b[i,(ncol(file_b))]=file_b[i,(ncol(file_b))]+1
+    }
+  }
+}
+
+file_b$maxcount<- rowSums(file_b[,1:ncol(file_b)-1])
+transcripts_b_not_counted<-subset(file_b,file_b$count <= (0.10*ncol(file_b))) # +90% of samples without counting
+transcripts_b_counted<-subset(file_b,file_b$count > (0.10*ncol(file_b)))
+transcripts_b_not_counted_b<-as.data.frame(transcripts_b_not_counted[,"count"])
+transcripts_b_not_counted_b$transcript<-rownames(transcripts_b_not_counted)
+transcripts_b_not_counted_b<-transcripts_b_not_counted_b[,c(2,1)]
+colnames(transcripts_b_not_counted_b)<- c("transcript", "count")
+transcripts_b_not_counted_c<-transcripts_b_not_counted_b[,1]
+
+
+gtf_b<-read.table(paste0(folder_b, "/comparisons/lncRNA/set_b_all_flags_u_clean_concatenated2.gtf"), sep = "\t")
+gtf_b$gene_id<-word(gtf_b$V9, start = 2, end = 2, sep = ";")
+gtf_b$gene_id<-gsub("gene_id ", "", gtf_b$gene_id)
+gtf_b$gene_id<-gsub(" ", "", gtf_b$gene_id)
+gtf_b$transcript<-word(gtf_b$V9, start = 1, end = 1, sep = ";")
+gtf_b$transcript<-gsub("transcript_id ", "", gtf_b$transcript)
+gtf_b$transcript<-gsub(" ", "", gtf_b$transcript)
+gtf_b_transcripts<-gtf_b[gtf_b$V3 == "transcript",]
+
+#Summary
+
+#set A
+transcripts_a_to_remove<-subset(gtf_a_transcripts, gtf_a_transcripts$gene_id %in% transcripts_a_not_counted_c)
+print("Transcripts to remove from set A without counts:")
+table(transcripts_a_to_remove$V3)
+transcripts_a_to_remove_list<-transcripts_a_to_remove$transcript
+
+#set B
+transcripts_b_to_remove<-subset(gtf_b_transcripts, gtf_b_transcripts$gene_id %in% transcripts_b_not_counted_c)
+print("Transcripts to remove from set B without counts:")
+table(transcripts_b_to_remove$V3)
+transcripts_b_to_remove_list<-transcripts_b_to_remove$transcript
+
+
+write.table(transcripts_a_to_remove_list, file = paste0(folder_a, "/R_outputs/not_counted_transcripts_set_a.txt"), sep = "\t",append = FALSE, quote = FALSE, row.names = FALSE, col.names=FALSE)
+write.table(transcripts_b_to_remove_list, file = paste0(folder_b, "/R_outputs/not_counted_transcripts_set_b.txt"), sep = "\t",append = FALSE, quote = FALSE, row.names = FALSE, col.names=FALSE)
+
+
+save.image(file=paste0(folder_a, "/R_outputs/Rscript_6.RData"))
+save.image(file=paste0(folder_b, "/R_outputs/Rscript_6.RData"))
+```
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+folder_b=/test/set_b
+
+#Set A
+/gffread/gffread $folder_a/comparisons/lncRNA/set_a_all_flags_u_clean_concatenated2.gtf --nids $folder_a/R_outputs/not_counted_transcripts_set_a.txt -T -o $folder_a/comparisons/lncRNA/set_a_all_flags_u_final.gtf
+#Set B
+/gffread/gffread $folder_b/comparisons/lncRNA/set_b_all_flags_u_clean_concatenated2.gtf --nids $folder_b/R_outputs/not_counted_transcripts_set_b.txt -T -o $folder_b/comparisons/lncRNA/set_b_all_flags_u_final.gtf
+```
+
+
+##Merging close transcripts -  Set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+
+cd $folder_a/comparisons/lncRNA/
+
+/gffread/gffread set_a_all_flags_u_final.gtf -o set_a_all_flags_u_final2.gff
+awk '{ if ($3 == "transcript") print $0 }' set_a_all_flags_u_final2.gff > set_a_all_flags_u_final2_transcripts.gff
+/gffread/gffread set_a_all_flags_u_final2_transcripts.gff --bed -o set_a_all_flags_u_final2_transcripts.bed
+sort -k1,1 -k2,2n set_a_all_flags_u_final2_transcripts.bed > set_a_all_flags_u_final2_transcripts2.bed
+bedtools merge -i set_a_all_flags_u_final2_transcripts2.bed -header -s -d 300 -c 4,5,6 -o collapse,sum,distinct -delim "+" > merged_set_a_all_flags_u_final2_transcripts2.bed
+bedToGenePred merged_set_a_all_flags_u_final2_transcripts2.bed genepred.gp
+genePredToGtf file genepred.gp merged_set_a_all_flags_u_final2_transcripts2.gtf
+/gffread/gffread merged_set_a_all_flags_u_final2_transcripts2.gtf -MQK --cset -T -o  set_a_all_flags_u_final3.gtf 
+awk '{ if ($3 == "transcript") print $0 }' set_a_all_flags_u_final3.gtf  > only_transcripts_set_a_all_flags_u_final3.gtf
+
+rm set_a_all_flags_u_final2.gff set_a_all_flags_u_final2_transcripts.gff set_a_all_flags_u_final2_transcripts.bed set_a_all_flags_u_final2_transcripts2.bed merged_set_a_all_flags_u_final2_transcripts2.bed genepred.gp merged_set_a_all_flags_u_final2_transcripts2.gtf
+
+```
+
+
+##Merging close transcripts -  Set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+
+cd $folder_b/comparisons/lncRNA/
+
+/gffread/gffread set_b_all_flags_u_final.gtf -o set_b_all_flags_u_final2.gff
+awk '{ if ($3 == "transcript") print $0 }' set_b_all_flags_u_final2.gff > set_b_all_flags_u_final2_transcripts.gff
+/gffread/gffread set_b_all_flags_u_final2_transcripts.gff --bed -o set_b_all_flags_u_final2_transcripts.bed
+sort -k1,1 -k2,2n set_b_all_flags_u_final2_transcripts.bed > set_b_all_flags_u_final2_transcripts2.bed
+bedtools merge -i set_b_all_flags_u_final2_transcripts2.bed -header -s -d 300 -c 4,5,6 -o collapse,sum,distinct -delim "+" > merged_set_b_all_flags_u_final2_transcripts2.bed
+bedToGenePred merged_set_b_all_flags_u_final2_transcripts2.bed genepred.gp
+genePredToGtf file genepred.gp merged_set_b_all_flags_u_final2_transcripts2.gtf
+/gffread/gffread merged_set_b_all_flags_u_final2_transcripts2.gtf -MQK --cset -T -o  set_b_all_flags_u_final3.gtf 
+awk '{ if ($3 == "transcript") print $0 }' set_b_all_flags_u_final3.gtf  > only_transcripts_set_b_all_flags_u_final3.gtf
+
+rm set_b_all_flags_u_final2.gff set_b_all_flags_u_final2_transcripts.gff set_b_all_flags_u_final2_transcripts.bed set_b_all_flags_u_final2_transcripts2.bed merged_set_b_all_flags_u_final2_transcripts2.bed genepred.gp merged_set_b_all_flags_u_final2_transcripts2.gtf
+
+```
+
+
+##Get FASTA sequences from final gtf coordinates - Set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+reference_genome_ensembl=/reference/fasta/Bos_taurus.ARS-UCD1.2.dna.toplevel.fa
+
+cd $folder_a/comparisons/lncRNA/
+/gffread/gffread -w set_a_all_flags_u_final3.fasta -g $reference_genome_ensembl set_a_all_flags_u_final3.gtf
+
+```
+
+
+##Get FASTA sequences from final gtf coordinates - Set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+reference_genome_ensembl=/reference/fasta/Bos_taurus.ARS-UCD1.2.dna.toplevel.fa
+
+cd $folder_b/comparisons/lncRNA/
+/gffread/gffread -w set_b_all_flags_u_final3.fasta -g $reference_genome_ensembl set_b_all_flags_u_final3.gtf
+
+```
+
+
+##Make DIAMOND db file
+```{bash, eval=FALSE}
+cd /reference/others/nr_db/
+diamond makedb --in nr.gz --db /reference/others/nr_db/nr_db --taxonmap prot.accession2taxid.FULL.gz --taxonnodes nodes.dmp --taxonnames names.dmp
+```
+
+
+##Identifying orthologs - (Humans + Mice + Mammals) Possible family gene member (Bos taurus + Bos indicus + Bos taurus x Bos Indicus) - Set A##
+```{bash, eval=FALSE}
+folder_a=/test/set_a
+n_cores=30
+organism_1=9913,9915,30522
+organism_1_e_value=0.000001
+organism_1_perc_id=90
+organism_1_cov=90
+organism_2=9606,10090
+organism_2_e_value=0.000001
+organism_2_perc_id=70
+organism_2_cov=90
+organism_3=40674
+organism_3_e_value=0.000001
+organism_3_perc_id=70
+organism_3_cov=90
+
+cd $folder_a/functional_characterization
+ 
+#Cattle or Organism 1
+echo "Organism 1 was set:"
+echo $organism_1
+diamond blastx -d /reference/others/nr_db/nr_db -q $folder_a/comparisons/lncRNA/set_a_all_flags_u_final3.fasta --taxonlist $organism_1 -e $organism_1_e_value --subject-cover $organism_1_cov -o set_a_nr_1.tsv -p $n_cores -k 1 -f 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore staxids qcovhsp --unal 1 --id $organism_1_perc_id
+awk '{print $1}' set_a_nr_1.tsv > set_a_nr_1_list_no_match.tsv
+awk '$2 ~ /^[[:alnum:]]+/' set_a_nr_1.tsv > set_a_nr_1_match.tsv
+/seqtk/seqtk subseq $folder_a/comparisons/lncRNA/set_a_all_flags_u_final3.fasta set_a_nr_1_list_no_match.tsv > set_a_all_flags_u_no_match.fasta 
+
+#Human and Mouse | or Organism 2
+echo "Organism 2 was set:"
+echo $organism_2
+diamond blastx -d /reference/others/nr_db/nr_db -q set_a_all_flags_u_no_match.fasta --taxonlist $organism_2 -e $organism_2_e_value --subject-cover $organism_2_cov -o set_a_nr_2.tsv -p $n_cores -k 1 -f 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore staxids qcovhsp --unal 1 --id $organism_2_perc_id
+awk '{print $1}' set_a_nr_2.tsv > set_a_nr_2_list_no_match.tsv
+awk '$2 ~ /^[[:alnum:]]+/' set_a_nr_2.tsv > set_a_nr_2_match.tsv
+/seqtk/seqtk subseq set_a_all_flags_u_no_match.fasta set_a_nr_2_list_no_match.tsv > set_a_all_flags_u_no_match2.fasta
+
+#Mammals or Organism 3
+echo "Organism 3 was set:"
+echo $organism_3
+diamond blastx -d /reference/others/nr_db/nr_db -q set_a_all_flags_u_no_match2.fasta --taxonlist $organism_3 -e $organism_3_e_value --subject-cover $organism_3_cov -o set_a_nr_3.tsv -p $n_cores -k 1 -f 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore staxids qcovhsp --unal 1 --id $organism_3_perc_id
+awk '{print $1}' set_a_nr_3.tsv > set_a_nr_3_list_no_match.tsv
+awk '$2 ~ /^[[:alnum:]]+/' set_a_nr_3.tsv > set_a_nr_3_match.tsv
+/seqtk/seqtk subseq set_a_all_flags_u_no_match2.fasta set_a_nr_3_list_no_match.tsv > set_a_all_flags_u_no_match3.fasta
+```
+
+
+##Identifying orthologs - (Humans + Mice + Mammals) Possible family gene member (Bos taurus + Bos indicus + Bos taurus x Bos Indicus) - Set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+n_cores=30
+organism_1=9913,9915,30522
+organism_1_e_value=0.000001
+organism_1_perc_id=90
+organism_1_cov=90
+organism_2=9606,10090
+organism_2_e_value=0.000001
+organism_2_perc_id=70
+organism_2_cov=90
+organism_3=40674
+organism_3_e_value=0.000001
+organism_3_perc_id=70
+organism_3_cov=90
+
+cd $folder_b/functional_characterization
+
+#Cattle or Organism 1
+echo "Organism 1 was set:"
+echo $organism_1
+diamond blastx -d /reference/others/nr_db/nr_db -q $folder_b/comparisons/lncRNA/set_b_all_flags_u_final3.fasta --taxonlist $organism_1 -e $organism_1_e_value --subject-cover $organism_1_cov -o set_b_nr_1.tsv -p $n_cores -k 1 -f 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore staxids qcovhsp --unal 1 --id $organism_1_perc_id
+awk '{print $1}' set_b_nr_1.tsv > set_b_nr_1_list_no_match.tsv
+awk '$2 ~ /^[[:alnum:]]+/' set_b_nr_1.tsv > set_b_nr_1_match.tsv
+/seqtk/seqtk subseq $folder_b/comparisons/lncRNA/set_b_all_flags_u_final3.fasta set_b_nr_1_list_no_match.tsv > set_b_all_flags_u_no_match.fasta 
+
+#Human and Mouse | or Organism 2
+echo "Organism 2 was set:"
+echo $organism_2
+diamond blastx -d /reference/others/nr_db/nr_db -q set_b_all_flags_u_no_match.fasta --taxonlist $organism_2 -e $organism_2_e_value --subject-cover $organism_2_cov -o set_b_nr_2.tsv -p $n_cores -k 1 -f 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore staxids qcovhsp --unal 1 --id $organism_2_perc_id
+awk '{print $1}' set_b_nr_2.tsv > set_b_nr_2_list_no_match.tsv
+awk '$2 ~ /^[[:alnum:]]+/' set_b_nr_2.tsv > set_b_nr_2_match.tsv
+/seqtk/seqtk subseq set_b_all_flags_u_no_match.fasta set_b_nr_2_list_no_match.tsv > set_b_all_flags_u_no_match2.fasta
+
+
+#Mammals or Organism 3
+echo "Organism 3 was set:"
+echo $organism_3
+diamond blastx -d /reference/others/nr_db/nr_db -q set_b_all_flags_u_no_match2.fasta --taxonlist $organism_3 -e $organism_3_e_value --subject-cover $organism_3_cov -o set_b_nr_3.tsv -p $n_cores -k 1 -f 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore staxids qcovhsp --unal 1 --id $organism_3_perc_id
+awk '{print $1}' set_b_nr_3.tsv > set_b_nr_3_list_no_match.tsv
+awk '$2 ~ /^[[:alnum:]]+/' set_b_nr_3.tsv > set_b_nr_3_match.tsv
+/seqtk/seqtk subseq set_b_all_flags_u_no_match2.fasta set_b_nr_3_list_no_match.tsv > set_b_all_flags_u_no_match3.fasta
+
+```
+
+
+##Filter #7 - Filtering ortologous proteins##
+```{r, eval=FALSE}
+folder_a <- "/test/set_a"
+folder_b <- "/test/set_b"
+
+files_a<-list.files(paste0(folder_a,"/functional_characterization"), recursive=F, pattern="_match.tsv", full.names = TRUE)
+files_a<-files_a[grep("_no_match", files_a, invert = TRUE)]
+info<-file.info(files_a)
+empty<-rownames(info[info$size == 0L, ])
+files_a<-files_a[!(files_a %in% empty)]
+
+organism_a<-data.frame(data.frame())
+for (i in 1:length(files_a))  {
+  organism<-read.delim(files_a[i], header=FALSE, sep= "\t", stringsAsFactors = FALSE)
+  organism<-organism[,c(1,2)]
+  organism$V3<-files_a[i]
+  organism$V3<-word(organism$V3, start = 5, end = 5, sep = "/")
+  organism$V3<-gsub("set_a_nr_", "organism_", organism$V3)
+  organism$V3<-gsub("_match.tsv", "", organism$V3)
+  organism_a<-rbind(organism_a,organism)
+}
+
+organism_a$label<- NA
+organism_a[is.na(organism_a)]<- "Protein"
+colnames(organism_a) <- c("Unknown_gene_loci", "V2", "V3", "name", "label")
+
+for (i in 1:nrow(organism_a)){
+  if (str_detect(organism_a[i,4], 'ncRNA')){
+    organism_a[i,5] <- "NC - Remove"
+  }
+  if (str_detect(organism_a[i,4], 'reverse transcriptase')){
+    organism_a[i,5] <- "TE - Remove"
+  }
+  if (str_detect(organism_a[i,4], 'ranspos')){
+    organism_a[i,5] <- "TE - Remove"
+  }
+    if (str_detect(organism_a[i,4], 'etrovirus')){
+    organism_a[i,5] <- "TE - Remove"
+  }
+  if (str_detect(organism_a[i,4], 'ORF')){
+    organism_a[i,5] <- "TE - Remove"
+  }
+  if (str_detect(organism_a[i,4], 'open reading frame')){
+    organism_a[i,5] <- "TE - Remove"
+  }
+  if (str_detect(organism_a[i,4], 'NCBI Reference Sequence')){
+    organism_a[i,5] <- "Unknown - Remove"
+  }
+}
+
+
+
+organism_a2 <- organism_a[(organism_a$label != "Protein"),]
+
+proteins_a<-subset(organism_a, organism_a$label == "Protein")
+
+print("Set A have:")
+table(proteins_a$label)
+
+write.table(proteins_a, paste0(folder_a, "/functional_characterization/all_hits_set_a.txt"), row.names = F, col.names = F,  sep = "\t")
+write.table(organism_a2, paste0(folder_a, "/functional_characterization/unknown_set_a.txt"), row.names = F, col.names = F)
+
+
+#Set B
+
+files_b<-list.files(paste0(folder_b,"/functional_characterization"), recursive=F, pattern="_match.tsv", full.names = TRUE)
+files_b<-files_b[grep("_no_match", files_b, invert = TRUE)]
+info<-file.info(files_b)
+empty<-rownames(info[info$size == 0L, ])
+files_b<-files_b[!(files_b %in% empty)]
+
+
+organism_b<-data.frame()
+for (i in 1:length(files_b))  {
+  organism<-read.delim(files_b[i], header=FALSE, sep= "\t", stringsAsFactors = FALSE)
+  organism<-organism[,c(1,2)]
+  organism$V3<-files_b[i]
+  organism$V3<-word(organism$V3, start = 5, end = 5, sep = "/")
+  organism$V3<-gsub("set_b_nr_", "organism_", organism$V3)
+  organism$V3<-gsub("_match.tsv", "", organism$V3)
+  organism_b<-rbind(organism_b,organism)
+}
+
+organism_b$label<- NA
+organism_b[is.na(organism_b)]<- "Protein"
+colnames(organism_b) <- c("Unknown_gene_loci", "V2", "V3", "name", "label")
+
+for (i in 1:nrow(organism_b)){
+  if (str_detect(organism_b[i,4], 'ncRNA')){
+    organism_b[i,5] <- "NC - Remove"
+  }
+  if (str_detect(organism_b[i,4], 'reverse transcriptase')){
+    organism_b[i,5] <- "TE - Remove"
+  }
+  if (str_detect(organism_b[i,4], 'ranspos')){
+    organism_b[i,5] <- "TE - Remove"
+  }
+    if (str_detect(organism_b[i,4], 'etrovirus')){
+    organism_b[i,5] <- "TE - Remove"
+  }
+  if (str_detect(organism_b[i,4], 'ORF')){
+    organism_b[i,5] <- "TE - Remove"
+  }
+  if (str_detect(organism_b[i,4], 'open reading frame')){
+    organism_b[i,5] <- "TE - Remove"
+  }
+  if (str_detect(organism_b[i,4], 'NCBI Reference Sequence')){
+    organism_b[i,5] <- "Unknown - Remove"
+  }
+}
+
+organism_b2 <- organism_b[(organism_b$label != "Protein"),]
+
+proteins_b<-subset(organism_b, organism_b$label == "Protein") 
+
+print("Set B have:")
+table(proteins_b$label)
+
+write.table(proteins_b, paste0(folder_b, "/functional_characterization/all_hits_set_b.txt"), row.names = F, col.names = F,  sep = "\t")
+write.table(organism_b2, paste0(folder_b, "/functional_characterization/unknown_set_b.txt"), row.names = F, col.names = F)
+
+save.image(file=paste0(folder_a,"/R_outputs/Rscript_7.RData"))
+save.image(file=paste0(folder_b,"/R_outputs/Rscript_7.RData"))
+
+```
+
+
+##Identifying coding vs noncoding potential - RNAsamba - Set A##
+```{bash, eval=FALSE}
+
+folder_a=/test/set_a
+
+cd $folder_a/functional_characterization
+
+awk '{print $1}' all_hits_set_a.txt | sed -e 's/\"//g' > protein_list.csv
+if test -f $folder_a/functional_characterization/set_a_all_flags_u_no_match3.fasta; then
+  seqkit grep -iv -f protein_list.csv $folder_a/functional_characterization/set_a_all_flags_u_no_match3.fasta --quiet > set_a_all_flags_u_no_orthologous.fasta
+fi
+if [[ ! -e $folder_a/functional_characterization/set_a_all_flags_u_no_match3.fasta && -e $folder_a/functional_characterization/set_a_all_flags_u_no_match2.fasta ]]; then
+  seqkit grep -iv -f protein_list.csv $folder_a/functional_characterization/set_a_all_flags_u_no_match2.fasta --quiet > set_a_all_flags_u_no_orthologous.fasta
+fi
+if ! test -f $folder_a/functional_characterization/set_a_all_flags_u_no_match2.fasta; then
+  seqkit grep -iv -f protein_list.csv $folder_a/functional_characterization/set_a_all_flags_u_no_match1.fasta --quiet > set_a_all_flags_u_no_orthologous.fasta
+fi
+
+rnasamba classify output.tsv set_a_all_flags_u_no_orthologous.fasta /reference/others/partial_length_weights.hdf5
+
+awk '$4 ~ /^coding/' output.tsv > set_a_all_flags_u_no_orthologous_coding.txt
+awk '$4 ~ /^noncoding/' output.tsv > set_a_all_flags_u_no_orthologous_noncoding.txt
+echo "The remaining SET A transcript loci without orthologous proteins similiarity was classified in:"
+echo "coding_potential:"
+wc -l set_a_all_flags_u_no_orthologous_coding.txt
+echo "non_coding_potential:"
+wc -l set_a_all_flags_u_no_orthologous_noncoding.txt
+```
+
+
+##Identifying coding vs noncoding potential - RNAsamba - Set B##
+```{bash, eval=FALSE}
+folder_b=/test/set_b
+
+
+cd $folder_b/functional_characterization
+
+awk '{print $1}' all_hits_set_b.txt | sed -e 's/\"//g' > protein_list.csv
+if test -f $folder_b/functional_characterization/set_b_all_flags_u_no_match3.fasta; then
+  seqkit grep -iv -f protein_list.csv $folder_b/functional_characterization/set_b_all_flags_u_no_match3.fasta --quiet > set_b_all_flags_u_no_orthologous.fasta
+fi
+if [[ ! -e $folder_b/functional_characterization/set_b_all_flags_u_no_match3.fasta && -e $folder_b/functional_characterization/set_b_all_flags_u_no_match2.fasta ]]; then
+  seqkit grep -iv -f protein_list.csv $folder_b/functional_characterization/set_b_all_flags_u_no_match2.fasta --quiet > set_ab_all_flags_u_no_orthologous.fasta
+fi
+if ! test -f $folder_b/functional_characterization/set_b_all_flags_u_no_match2.fasta; then
+  seqkit grep -iv -f protein_list.csv $folder_b/functional_characterization/set_b_all_flags_u_no_match1.fasta --quiet > set_b_all_flags_u_no_orthologous.fasta
+fi
+
+rnasamba classify output.tsv set_b_all_flags_u_no_orthologous.fasta /reference/others/partial_length_weights.hdf5
+
+awk '$4 ~ /^coding/' output.tsv > set_b_all_flags_u_no_orthologous_coding.txt
+awk '$4 ~ /^noncoding/' output.tsv > set_b_all_flags_u_no_orthologous_noncoding.txt
+echo "The remaining SET B transcript loci without orthologous proteins similiarity was classified in:"
+echo "coding_potential:"
+wc -l set_b_all_flags_u_no_orthologous_coding.txt
+echo "non_coding_potential:"
+wc -l set_b_all_flags_u_no_orthologous_noncoding.txt
+
+```
+
+
+##Summary and Identify common transcript loci ##
+```{r, eval=FALSE}
+folder_a <- "/test/set_a"
+folder_b <- "/test/set_b"
+
+
+#Set A
+
+rnasamba_a <- read.table(paste0(folder_a, "/functional_characterization/output.tsv"), header = T)
+rnasamba_a$sequence_name <- rownames(rnasamba_a)
+rnasamba_a <- rnasamba_a[,c(1,3)]
+proteins_a <- read.table(paste0(folder_a, "/functional_characterization/all_hits_set_a.txt"))
+proteins_a <- proteins_a[,c(1,2,4,5)]
+colnames(proteins_a) <- c("sequence_name", "NCBI_ID", "name", "classification")
+summary_a <- merge(proteins_a, rnasamba_a, by="sequence_name", all = T)
+summary_a$final_classification<-NA
+for (i in 1:nrow(summary_a)){
+  if (is.na(summary_a[i,"classification.x"]) &&
+  summary_a[i,"classification.y"] == "coding"){
+    summary_a[i,"final_classification"] <- "C_RS"
+  }
+  if (is.na(summary_a[i,"classification.x"]) &&
+  summary_a[i,"classification.y"] == "noncoding"){
+    summary_a[i,"final_classification"] <- "NC_RS"
+  }
+  if (summary_a[i,"classification.x"] == "Protein" &&
+  is.na(summary_a[i,"classification.y"])) {
+    summary_a[i,"final_classification"] <- "C_Or"
+  }
+}
+
+summary_a <- summary_a[,c(1:3,6)]
+write.csv(summary_a, paste0(folder_a, "/functional_characterization/summary_transcript_loci_set_a"), row.names = FALSE)
+
+#Set B
+
+rnasamba_b <- read.table(paste0(folder_b, "/functional_characterization/output.tsv"), header = T)
+rnasamba_b$sequence_name <- rownames(rnasamba_b)
+rnasamba_b <- rnasamba_b[,c(1,3)]
+proteins_b <- read.table(paste0(folder_b, "/functional_characterization/all_hits_set_b.txt"))
+proteins_b <- proteins_b[,c(1,2,4,5)]
+colnames(proteins_b) <- c("sequence_name", "NCBI_ID", "name", "classification")
+summary_b <- merge(proteins_b, rnasamba_b, by="sequence_name", all = T)
+summary_b$final_classification<-NA
+for (i in 1:nrow(summary_b)){
+  if (is.na(summary_b[i,"classification.x"]) &&
+  summary_b[i,"classification.y"] == "coding"){
+    summary_b[i,"final_classification"] <- "C_RS"
+  }
+  if (is.na(summary_b[i,"classification.x"]) &&
+  summary_b[i,"classification.y"] == "noncoding"){
+    summary_b[i,"final_classification"] <- "NC_RS"
+  }
+  if (summary_b[i,"classification.x"] == "Protein" &&
+  is.na(summary_b[i,"classification.y"])) {
+    summary_b[i,"final_classification"] <- "C_Or"
+  }
+}
+
+summary_b <- summary_b[,c(1:3,6)]
+write.csv(summary_b, paste0(folder_b, "/functional_characterization/summary_transcript_loci_set_b"), row.names = FALSE)
+
+
+#Set A
+
+gtf_file_a <- read.table(paste0(folder_a, "/comparisons/lncRNA/set_a_all_flags_u_final3.gtf"), sep = "\t")
+gtf_file_a <- subset(gtf_file_a, gtf_file_a$V3 == "transcript")
+
+gtf_file_a$name <- word(sep = ";", start = 1 , end = 1, gtf_file_a$V9)
+gtf_file_a$name <- gsub("transcript_id ", "", gtf_file_a$name)
+
+gtf_file_a_granges <- GRanges(
+  seqnames = gtf_file_a$V1,
+  ranges = IRanges(
+    start = gtf_file_a$V4,
+    end = gtf_file_a$V5,
+    names = gtf_file_a$V9
+    ),
+  strand = gtf_file_a$V7,
+  names = gtf_file_a$V9
+)
+
+
+#Set B
+
+gtf_file_b <- read.table(paste0(folder_b, "/comparisons/lncRNA/set_b_all_flags_u_final3.gtf"), sep = "\t")
+gtf_file_b <- subset(gtf_file_b, gtf_file_b$V3 == "transcript")
+
+gtf_file_b$name <- word(sep = ";", start = 1 , end = 1, gtf_file_b$V9)
+gtf_file_b$name <- gsub("transcript_id ", "", gtf_file_b$name)
+
+gtf_file_b_granges <- GRanges(
+  seqnames = gtf_file_b$V1,
+  ranges = IRanges(
+    start = gtf_file_b$V4,
+    end = gtf_file_b$V5,
+    names = gtf_file_b$V9
+    ),
+  strand = gtf_file_b$V7,
+  names = gtf_file_b$V9
+)
+
+#Overlapping Set A vs Set B
+
+overlaps_a<- suppressWarnings(overlapsAny(gtf_file_a_granges, gtf_file_b_granges,
+    maxgap=0,
+    ignore.strand=FALSE))
+
+overlapping_a_gtf <- gtf_file_a_granges[(overlaps_a)]
+
+overlapping_a_gtf_df <- data.frame(
+  seqnames = seqnames(overlapping_a_gtf),
+  start = start(overlapping_a_gtf),
+  end = end(overlapping_a_gtf),
+  strand = strand(overlapping_a_gtf),
+  names = names(overlapping_a_gtf)
+)
+
+b_overlapping_a_gtf_df <- overlapping_a_gtf_df
+b_overlapping_a_gtf_df$names <- word(sep = ";", start = 1, end = 1, b_overlapping_a_gtf_df$names)
+b_overlapping_a_gtf_df$names <- gsub("transcript_id ", "", b_overlapping_a_gtf_df$names)
+b_overlapping_a_gtf_df$seqnames <- as.character(b_overlapping_a_gtf_df$seqnames)
+b_overlapping_a_gtf_df <- as.data.frame(b_overlapping_a_gtf_df[order(b_overlapping_a_gtf_df$seqnames, b_overlapping_a_gtf_df$start),])
+
+write.table(b_overlapping_a_gtf_df, paste0(folder_a, "/R_outputs/set_a_transcripts_in_common_with_set_b.txt"), row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+no_overlaps_a<- suppressWarnings(!overlapsAny(gtf_file_a_granges, gtf_file_b_granges,
+    maxgap=0,
+    ignore.strand=FALSE))
+
+no_overlapping_a_gtf <- gtf_file_a_granges[(no_overlaps_a)]
+
+no_overlapping_a_gtf_df <- data.frame(
+  seqnames = seqnames(no_overlapping_a_gtf),
+  start = start(no_overlapping_a_gtf),
+  end = end(no_overlapping_a_gtf),
+  strand = strand(no_overlapping_a_gtf),
+  names = names(no_overlapping_a_gtf)
+)
+
+b_no_overlapping_a_gtf_df <- no_overlapping_a_gtf_df
+b_no_overlapping_a_gtf_df$names <- word(sep = ";", start = 1, end = 1, b_no_overlapping_a_gtf_df$names)
+b_no_overlapping_a_gtf_df$names <- gsub("transcript_id ", "", b_no_overlapping_a_gtf_df$names)
+b_no_overlapping_a_gtf_df$seqnames <- as.character(b_no_overlapping_a_gtf_df$seqnames)
+b_no_overlapping_a_gtf_df <- b_no_overlapping_a_gtf_df[order(b_no_overlapping_a_gtf_df$seqnames, b_no_overlapping_a_gtf_df$start),]
+
+
+write.table(b_no_overlapping_a_gtf_df, paste0(folder_a, "/R_outputs/set_a_transcripts_exclusive.txt"), row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+#Overlapping Set B vs Set A
+
+
+overlaps_b<- suppressWarnings(overlapsAny(gtf_file_b_granges, gtf_file_a_granges,
+    maxgap=0,
+    ignore.strand=FALSE))
+
+overlapping_b_gtf <- gtf_file_b_granges[(overlaps_b)]
+
+overlapping_b_gtf_df <- data.frame(
+  seqnames = seqnames(overlapping_b_gtf),
+  start = start(overlapping_b_gtf),
+  end = end(overlapping_b_gtf),
+  strand = strand(overlapping_b_gtf),
+  names = names(overlapping_b_gtf)
+)
+
+b_overlapping_b_gtf_df <- overlapping_b_gtf_df
+b_overlapping_b_gtf_df$names <- word(sep = ";", start = 1, end = 1, b_overlapping_b_gtf_df$names)
+b_overlapping_b_gtf_df$names <- gsub("transcript_id ", "", b_overlapping_b_gtf_df$names)
+b_overlapping_b_gtf_df$seqnames <- as.character(b_overlapping_b_gtf_df$seqnames)
+b_overlapping_b_gtf_df <- b_overlapping_b_gtf_df[order(b_overlapping_b_gtf_df$seqnames, b_overlapping_b_gtf_df$start),]
+
+
+write.table(b_overlapping_b_gtf_df, paste0(folder_b, "/R_outputs/set_b_transcripts_in_common_with_set_a.txt"), row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+no_overlaps_b<- suppressWarnings(!overlapsAny(gtf_file_b_granges, gtf_file_a_granges,
+    maxgap=0,
+    ignore.strand=FALSE))
+
+no_overlapping_b_gtf <- gtf_file_b_granges[(no_overlaps_b)]
+
+no_overlapping_b_gtf_df <- data.frame(
+  seqnames = seqnames(no_overlapping_b_gtf),
+  start = start(no_overlapping_b_gtf),
+  end = end(no_overlapping_b_gtf),
+  strand = strand(no_overlapping_b_gtf),
+  names = names(no_overlapping_b_gtf)
+)
+
+b_no_overlapping_b_gtf_df <- no_overlapping_b_gtf_df
+b_no_overlapping_b_gtf_df$names <- word(sep = ";", start = 1, end = 1, b_no_overlapping_b_gtf_df$names)
+b_no_overlapping_b_gtf_df$names <- gsub("transcript_id ", "", b_no_overlapping_b_gtf_df$names)
+b_no_overlapping_b_gtf_df$seqnames <- as.character(b_no_overlapping_b_gtf_df$seqnames)
+b_no_overlapping_b_gtf_df <- b_no_overlapping_b_gtf_df[order(b_no_overlapping_b_gtf_df$seqnames, b_no_overlapping_b_gtf_df$start),]
+
+
+write.table(b_no_overlapping_b_gtf_df, paste0(folder_b, "/R_outputs/set_b_transcripts_exclusive.txt"), row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+
+save.image(file=paste0(folder_a, "/R_outputs/Rscript_8.RData"))
+save.image(file=paste0(folder_b, "/R_outputs/Rscript_8.RData"))
+
+print("Total number of common trancript loci:")
+nrow(b_overlapping_a_gtf_df)
+print("Specific from set A:")
+nrow(b_no_overlapping_a_gtf_df)
+print("Specific from set B:")
+nrow(b_no_overlapping_b_gtf_df)
+
+```
+
