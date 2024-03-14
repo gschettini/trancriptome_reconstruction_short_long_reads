@@ -1,6 +1,6 @@
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/gschettini/integrating_sr_lr_workflow_transcriptome_reconstruction)](https://github.com/gschettini/integrating_SR_LR/releases/)
-[![GitHub Downloads](https://img.shields.io/github/downloads/gschettini/integrating_sr_lr_workflow_transcriptome_reconstruction/total.svg?style=social&logo=github&label=Download)](https://github.com/gschettini/integrating_SR_LR/releases)
-[![Docker pulls](https://img.shields.io/docker/pulls/gschettini/integrating_sr_lr_workflow_transcriptome_reconstruction.svg?label=Docker%20pulls&color=blue)](https://hub.docker.com/r/gschettini/integrating_sr_lr_workflow_transcriptome_reconstruction)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/gschettini/trancriptome_reconstruction_short_long_reads)](https://github.com/gschettini/trancriptome_reconstruction_short_long_reads/releases/)
+[![GitHub Downloads](https://img.shields.io/github/downloads/gschettini/trancriptome_reconstruction_short_long_reads/total.svg?style=social&logo=github&label=Download)](https://github.com/gschettini/trancriptome_reconstruction_short_long_reads/releases)
+[![Docker pulls](https://img.shields.io/docker/pulls/gschettini/trancriptome_reconstruction_short_long_reads.svg?label=Docker%20pulls&color=blue)](https://hub.docker.com/r/gschettini/integrating_sr_lr_workflow_transcriptome_reconstruction)
 
 
 <font size=20>__Integrating Illumina short-reads and ONT long-reads - Transcriptome reconstruction__</font> 
@@ -26,7 +26,7 @@ The "Integrating Illumina short-reads and ONT long-reads workflow" is a comprehe
 
 > [!NOTE]  
 > This work was partly supported by funding from the Agricultural Genome to Phenome Initiative (AG2PI), which is funded by USDA-NIFA award 2022-70412-38454. However, USDA-NIFA and AG2PI funding bodies had no role in the design and development of the workflow.<br><br>
-> <img src="https://github.com/gschettini/integrating_sr_lr_workflow_transcriptome_reconstruction/assets/107274474/847664c0-32ed-401c-89e0-7d5c593ffd92" width="100" height="55"><img src="https://github.com/gschettini/integrating_sr_lr_workflow_transcriptome_reconstruction/assets/107274474/6629b405-5fcc-4862-8f1e-cd78f83d4967" width="100" height="55">
+> <img src="https://github.com/gschettini/trancriptome_reconstruction_short_long_reads/assets/107274474/847664c0-32ed-401c-89e0-7d5c593ffd92" width="100" height="55"><img src="https://github.com/gschettini/trancriptome_reconstruction_short_long_reads/assets/107274474/6629b405-5fcc-4862-8f1e-cd78f83d4967" width="100" height="55">
 
 <a name="sec2"></a>
 # Installation
@@ -39,7 +39,7 @@ docker pull gschettini/integrating_sr_lr_workflow_transcriptome_reconstruction
 ```sh
 mkdir ~/integrating_SR_LR
 cd ~/integrating_SR_LR
-git clone https://github.com/gschettini/integrating_sr_lr_workflow_transcriptome_reconstruction.git
+git clone https://github.com/gschettini/trancriptome_reconstruction_short_long_reads.git
 docker build -t integrating_SR_LR .
 ```
 
@@ -49,7 +49,7 @@ docker build -t integrating_SR_LR .
 * Download all necessary files/scripts for this workflow <i>(Step required only if this GitHub repository was cloned)</i>:
 ```sh
 cd /
-wget https://github.com/gschettini/integrating_sr_lr_workflow_transcriptome_reconstruction/blob/main/integrating_sr_lr_files.tar.gz
+wget https://github.com/gschettini/trancriptome_reconstruction_short_long_reads/blob/main/integrating_sr_lr_files.tar.gz
 tar -xzvf integrating_sr_lr_files.tar.gz
 ```
 
@@ -90,7 +90,7 @@ There are two ways to use the workflow.
 -  One-set pipeline with only one set of samples (e.g. Oocytes), which does not include a final comparison and determination of unknown loci shared and/or exclusive for each set.
 
 > [!TIP]
-> An optional [Rmarkdown code](https://github.com/gschettini/integrating_sr_lr_workflow_transcriptome_reconstruction/blob/main/data/integrating_SR_LR.rmd) is provided `/data/integrating_SR_LR.rmd` and can be easily adapted in case of limitations.
+> An optional [Rmarkdown code](https://github.com/gschettini/trancriptome_reconstruction_short_long_reads/blob/main/data/integrating_SR_LR.rmd) is provided `/data/integrating_SR_LR.rmd` and can be easily adapted in case of limitations.
 
 
 The file `settings.sh` is a shell script that can be modified according to the user's needs.
