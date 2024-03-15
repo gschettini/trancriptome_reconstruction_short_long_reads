@@ -1,7 +1,6 @@
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/gschettini/trancriptome_reconstruction_short_long_reads)](https://github.com/gschettini/trancriptome_reconstruction_short_long_reads/releases/)
 [![GitHub Downloads](https://img.shields.io/github/downloads/gschettini/trancriptome_reconstruction_short_long_reads/total.svg?style=social&logo=github&label=Download)](https://github.com/gschettini/trancriptome_reconstruction_short_long_reads/releases)
-[![Docker pulls](https://img.shields.io/docker/pulls/gschettini/trancriptome_reconstruction_short_long_reads.svg?label=Docker%20pulls&color=blue)](https://hub.docker.com/r/gschettini/integrating_sr_lr_workflow_transcriptome_reconstruction)
-
+[![Docker pulls](https://img.shields.io/docker/pulls/gschettini/integrating_sr_lr_workflow_transcriptome_reconstruction.svg?label=Docker%20pulls&color=blue)](https://hub.docker.com/r/gschettini/integrating_sr_lr_workflow_transcriptome_reconstruction)
 
 <font size=20>__Integrating Illumina short-reads and ONT long-reads - Transcriptome reconstruction__</font> 
 
